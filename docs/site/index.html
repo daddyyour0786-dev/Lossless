@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<!--
+  The page a Listen Together invite lands on when Lossless is not installed.
+
+  Deploy: copy this file into your site repository (daddyyour0786-dev.github.io)
+  as `invite/index.html`. GitHub Pages serves it for
+  https://daddyyour0786-dev.github.io/invite/<CODE> as long as that path exists —
+  open `invite/CODE/index.html` too, or use `404.html`, so every code resolves.
+  RELEASING.md has the step-by-step.
+
+  Two jobs, in this order:
+
+  1. If Lossless is installed, hand the invite straight to it. The intent:// URL
+     is the standard Android way to try a scheme and fall back to a URL, so an
+     installed copy opens on the party without this page ever being seen.
+  2. If it is not installed — which is the whole reason somebody is reading this —
+     say what the app is, and offer the newest APK.
+
+  Everything is inline: no external CSS, fonts, scripts or images, so it works
+  offline, behind a proxy, and in the in-app preview.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#0A0A0B" />
+<title>Join a party on Lossless</title>
+<style>
+  :root {
+    --bg: #0A0A0B;
+    --surface: #141416;
+    --line: #26262A;
+    --text: #F5F5F7;
+    --muted: #9A9AA0;
+    --accent: #FFFFFF;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    width: 100%;
+    max-width: 420px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    padding: 32px 28px;
+    text-align: center;
+  }
+  .mark { width: 72px; height: auto; display: block; margin: 0 auto 18px; }
+  h1 { font-size: 24px; line-height: 1.25; margin: 0 0 8px; letter-spacing: -0.02em; }
+  p { color: var(--muted); margin: 0 0 20px; font-size: 15px; }
+  .code {
+    display: inline-block;
+    font: 600 20px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    letter-spacing: 0.18em;
+    padding: 14px 20px;
+    border-radius: 14px;
+    background: #000;
+    border: 1px solid var(--line);
+    margin: 0 0 24px;
+  }
+  .code.hidden { display: none; }
+  .actions { display: grid; gap: 10px; }
+  a.button {
+    display: block;
+    padding: 15px 20px;
+    border-radius: 14px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 15px;
+    transition: opacity .15s ease;
+  }
+  a.button:active { opacity: .7; }
+  .primary { background: var(--accent); color: #000; }
+  .secondary { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  .foot { margin: 22px 0 0; font-size: 12px; color: #6C6C72; }
+  .foot a { color: #6C6C72; }
+</style>
+</head>
+<body>
+  <main class="card">
+    <!-- The mark: a ring struck through by a sine wave. Inline, so the page has
+         no dependency on anything being reachable. -->
+    <svg class="mark" viewBox="3 19 94 62" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <g stroke="#FFFFFF" stroke-width="6.88" stroke-linecap="round" stroke-linejoin="round" fill="none">
+        <path d="M 22.5,50 a 27.5,27.5 0 1,0 55,0 a 27.5,27.5 0 1,0 -55,0 Z"/>
+        <path d="M 6.55,59.49 C 12.25,58.92 22.86,44.73 27.61,40.42 C 32.35,36.1 37.86,40.43 42.61,44.75 C 47.35,49.08 52.86,56.31 57.61,58.24 C 62.35,60.17 72.96,49.69 78.7,44.04 C 84.44,38.39 87.14,41.33 93.45,40.51"/>
+      </g>
+    </svg>
+
+    <h1 id="headline">Join the party</h1>
+    <p id="subtitle">You have been invited to listen together on Lossless.</p>
+
+    <div class="code hidden" id="code"></div>
+
+    <div class="actions">
+      <a class="button primary" id="download"
+         href="https://github.com/daddyyour0786-dev/Lossless/releases/latest">
+        Download Lossless
+      </a>
+      <a class="button secondary" id="releases"
+         href="https://github.com/daddyyour0786-dev/Lossless">
+        See the source on GitHub
+      </a>
+    </div>
+
+    <p class="foot">
+      Free, open source, and installed from a file — no store needed.
+      Android 8.0 or newer.
+    </p>
+  </main>
+
+<script>
+  // The code is the sixth-and-final path segment: /invite/ABC123 -> ABC123.
+  // Also accepted as ?code=, because a chat app sometimes mangles a path.
+  (function () {
+    var params = new URLSearchParams(location.search);
+    var segments = location.pathname.split('/').filter(Boolean);
+    var raw = params.get('code') || segments[segments.length - 1] || '';
+    var code = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+    if (code.length !== 6) {
+      return; // Not an invite: leave the generic text in place.
+    }
+
+    document.getElementById('code').textContent = code;
+    document.getElementById('code').classList.remove('hidden');
+    document.getElementById('headline').textContent = 'You are invited';
+
+    // Try the app. If it is installed this navigates away and the rest of this
+    // page is never seen; if it is not, Android lands on the fallback URL, which
+    // is this same page — so the guard below stops a refresh loop.
+    if (!params.has('from')) {
+      var server = params.get('server');
+      var target = 'lossless://party/' + code + (server ? '?server=' + encodeURIComponent(server) : '');
+      var fallback = location.origin + location.pathname + '?code=' + code + '&from=web';
+      location.href = 'intent://party/' + code +
+        (server ? '?server=' + encodeURIComponent(server) : '') +
+        '#Intent;scheme=lossless;package=com.lossless.app;S.browser_fallback_url=' +
+        encodeURIComponent(fallback) + ';end';
+      // Browsers that ignore intent:// fall through to the copy below.
+      void target;
+    }
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,68 @@
+name: Android APK (manual build)
+
+# A build you can trigger by hand from the Actions tab, for checking that main
+# still compiles and for an APK to sideload when no release is wanted.
+#
+# Shipping is .github/workflows/release.yml's job, on a tag — that is the only
+# place a version that installed copies will be offered comes from.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+          cache: gradle
+
+      # ubuntu-latest has an Android SDK, but not this build's compileSdk (37)
+      # and not the CMake the native analysis targets need. Installed here rather
+      # than left to the Gradle plugin's auto-download, which is silent when it
+      # fails and leaves you reading a "compileSdk 37 not found" some minutes
+      # later. Best-effort on purpose: if a package name has moved, the plugin's
+      # own download still gets a chance, and the step does not fail the build.
+      - name: Android SDK components
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-37" \
+            "build-tools;37.0.0" \
+            "cmake;3.22.1" \
+            "ndk;27.0.12077973" > /dev/null 2>&1 || \
+          echo "::warning::sdkmanager could not install everything; letting Gradle try."
+
+
+      - name: Write local.properties
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          LISTEN_TOGETHER_SERVER: ${{ secrets.LISTEN_TOGETHER_SERVER }}
+        run: |
+          : > local.properties
+          [ -n "${LASTFM_API_KEY:-}" ] && echo "LASTFM_API_KEY=$LASTFM_API_KEY" >> local.properties
+          [ -n "${LASTFM_SECRET:-}" ] && echo "LASTFM_SECRET=$LASTFM_SECRET" >> local.properties
+          [ -n "${LISTEN_TOGETHER_SERVER:-}" ] && echo "LISTEN_TOGETHER_SERVER=$LISTEN_TOGETHER_SERVER" >> local.properties
+          exit 0
+
+      - name: Build
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleProdDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: lossless-prod-debug
+          path: app/build/outputs/apk/prod/debug/*.apk

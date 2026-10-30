@@ -1,0 +1,178 @@
+name: Release
+
+# Cuts a GitHub release from a tag, and the APK in it is what every installed
+# copy of Lossless updates itself with.
+#
+#   tools/bump-version.sh minor      # 0.1.0 -> 0.2.0
+#   git commit -am "Release 0.2.0"
+#   git tag v0.2.0
+#   git push && git push --tags      # <- this is what starts the build
+#
+# The tag is read by AppUpdateChecker (leading "v" stripped) and compared against
+# the running build's versionName, so the three have to agree: the bump script
+# writes the version, the tag names it, and this workflow names the APK after it.
+# An APK whose file name does not start with `Lossless-` is invisible to the
+# in-app updater — see BuildConfig.UPDATE_APK_PREFIX.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and publish (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+          cache: gradle
+
+      # ubuntu-latest has an Android SDK, but not this build's compileSdk (37)
+      # and not the CMake the native analysis targets need. Installed here rather
+      # than left to the Gradle plugin's auto-download, which is silent when it
+      # fails and leaves you reading a "compileSdk 37 not found" some minutes
+      # later. Best-effort on purpose: if a package name has moved, the plugin's
+      # own download still gets a chance, and the step does not fail the build.
+      - name: Android SDK components
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-37" \
+            "build-tools;37.0.0" \
+            "cmake;3.22.1" \
+            "ndk;27.0.12077973" > /dev/null 2>&1 || \
+          echo "::warning::sdkmanager could not install everything; letting Gradle try."
+
+
+      # The version the tag claims has to be the version in the build, or the
+      # release will be published and then never offered to anybody: a phone
+      # compares the tag against its own versionName and finds them equal.
+      - name: Check the tag matches the build version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+            tag="${tag#v}"
+          fi
+          build_version="$(sed -n 's/^extra\["losslessVersionName"\] = "\([^"]*\)".*/\1/p' build.gradle.kts)"
+          echo "tag=$tag build=$build_version"
+          if [ "$tag" != "$build_version" ]; then
+            echo "::error::The tag says $tag but build.gradle.kts says $build_version."
+            echo "Run tools/bump-version.sh, commit, then tag the commit that did it."
+            exit 1
+          fi
+
+      # Signing material comes from repository secrets and is written the way the
+      # build already expects to find it. A release build refuses to fall back to
+      # the debug key on purpose: an APK signed with a throwaway key installs
+      # once and then fails every later update with a signature mismatch.
+      - name: Write signing config
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "${KEYSTORE_BASE64:-}" ]; then
+            echo "::error::KEYSTORE_BASE64 is not set — see RELEASING.md for the four secrets this needs."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > lossless-release.jks
+          {
+            echo "storeFile=lossless-release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > keystore.properties
+
+      # Credentials and the party-server address, all optional: the build runs
+      # without them and simply ships without last.fm scrubbing or a default
+      # Listen Together server.
+      - name: Write local.properties
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          LISTEN_TOGETHER_SERVER: ${{ secrets.LISTEN_TOGETHER_SERVER }}
+        run: |
+          # No sdk.dir line: the runner exports ANDROID_HOME/ANDROID_SDK_ROOT and
+          # settings.gradle.kts reads those itself. Writing an empty sdk.dir here
+          # would make it think this machine has no SDK and skip :app entirely.
+          : > local.properties
+          [ -n "${LASTFM_API_KEY:-}" ] && echo "LASTFM_API_KEY=$LASTFM_API_KEY" >> local.properties
+          [ -n "${LASTFM_SECRET:-}" ] && echo "LASTFM_SECRET=$LASTFM_SECRET" >> local.properties
+          [ -n "${LISTEN_TOGETHER_SERVER:-}" ] && echo "LISTEN_TOGETHER_SERVER=$LISTEN_TOGETHER_SERVER" >> local.properties
+          exit 0
+
+      - name: Build signed release APKs
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleProdRelease
+
+      # Renamed to the one shape the updater looks for: `Lossless-<version>` as a
+      # universal APK, and `Lossless-<version>_<abi>` for each split. The suffixes
+      # matter — AppUpdateChecker takes the universal file when it can and falls
+      # back to the split matching the device's own ABI.
+      - name: Name the APKs
+        id: apks
+        run: |
+          version="$(sed -n 's/^extra\["losslessVersionName"\] = "\([^"]*\)".*/\1/p' build.gradle.kts)"
+          mkdir -p out
+          shopt -s nullglob
+          for apk in app/build/outputs/apk/prod/release/*.apk; do
+            base="$(basename "$apk" .apk)"
+            # AGP puts the ABI in the middle of the file name
+            # (app-arm64-v8a-prod-release.apk) and the name in the updater's
+            # hands has to end in it instead (Lossless-0.1.0_arm64-v8a.apk):
+            # AppUpdateChecker prefers a name with no underscore at all, so a
+            # split that keeps one is read as the universal build and offered to
+            # the wrong processor.
+            name="Lossless-$version.apk"
+            for abi in armeabi-v7a arm64-v8a x86_64; do
+              case "$base" in
+                *"$abi"*) name="Lossless-$version_$abi.apk" ;;
+              esac
+            done
+            cp "$apk" "out/$name"
+            echo "  $name"
+          done
+          count="$(ls -1 out/*.apk 2>/dev/null | wc -l)"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::No APKs were produced — check the assemble step above."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          name: Lossless ${{ steps.apks.outputs.version }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: out/*.apk
+          body: |
+            Lossless ${{ steps.apks.outputs.version }}
+
+            Install the APK below, or just wait — every running copy of Lossless
+            offers this update inside the app the next time it is opened.
+
+            `Lossless-${{ steps.apks.outputs.version }}.apk` installs on any phone.
+            The `_<abi>` files are smaller builds for one processor each.

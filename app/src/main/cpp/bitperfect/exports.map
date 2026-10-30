@@ -1,0 +1,5 @@
+{
+    global:
+        Java_com_music_lossless_playback_audio_bitperfect_*;
+    local: *;
+};
