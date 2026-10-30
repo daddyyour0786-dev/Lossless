@@ -1,0 +1,50 @@
+diff --git a/.github/workflows/preview.yml b/.github/workflows/preview.yml
+index f7096de..ebf5c10 100644
+--- a/.github/workflows/preview.yml
++++ b/.github/workflows/preview.yml
+@@ -55,6 +55,18 @@ jobs:
+         run: |
+           if [ -n "${KEYSTORE_BASE64:-}" ]; then
+             echo "$KEYSTORE_BASE64" | base64 -d > lossless-release.jks
++            for name in KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
++              if [ -z "${!name:-}" ]; then
++                echo "::error::$name is not set. Add it under Settings → Secrets and variables → Actions."
++                exit 1
++              fi
++            done
++            if ! keytool -list -keystore lossless-release.jks \
++                -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" > /dev/null 2>&1; then
++              echo "::error::That keystore opens, but alias \"$KEY_ALIAS\" is not in it with that password. Check KEY_ALIAS and KEY_PASSWORD."
++              exit 1
++            fi
++            echo "::notice::Keystore, password and alias all check out."
+             store_pass="$KEYSTORE_PASSWORD"
+             alias="$KEY_ALIAS"
+             key_pass="$KEY_PASSWORD"
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 657fe3c..7683bd2 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -93,6 +93,22 @@ jobs:
+             exit 1
+           fi
+           echo "$KEYSTORE_BASE64" | base64 -d > lossless-release.jks
++          # Checked before Gradle starts, not ten minutes into it. A blank
++          # alias or key password used to surface as "KeytoolException: Failed
++          # to read key  from store ... keystore password was incorrect" — the
++          # double space is the empty alias, and nothing names the culprit.
++          for name in KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
++            if [ -z "${!name:-}" ]; then
++              echo "::error::$name is not set. Add it under Settings → Secrets and variables → Actions."
++              exit 1
++            fi
++          done
++          if ! keytool -list -keystore lossless-release.jks \
++              -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" > /dev/null 2>&1; then
++            echo "::error::That keystore opens, but alias \"$KEY_ALIAS\" is not in it with that password. Check KEY_ALIAS and KEY_PASSWORD."
++            exit 1
++          fi
++          echo "::notice::Keystore, password and alias all check out."
+           {
+             echo "storeFile=lossless-release.jks"
+             echo "storePassword=$KEYSTORE_PASSWORD"
