@@ -2892,43 +2892,6 @@ private fun CreditsFooter(version: String) {
             url = "https://github.com/Clash-Projects/LastWave-Native",
             linkStyles = linkStyles,
         )
-        CreditLine(
-            what = "NewPipe Extractor",
-            why = "YouTube stream resolution",
-            url = "https://github.com/TeamNewPipe/NewPipeExtractor",
-            linkStyles = linkStyles,
-        )
-        CreditLine(
-            what = "InnerTubeX",
-            why = "the InnerTube client catalog",
-            url = "https://github.com/MetrolistGroup/innertubex",
-            linkStyles = linkStyles,
-        )
-        CreditLine(
-            what = "am-lyrics",
-            why = "the Apple-style lyrics animation, by binimum",
-            url = "https://github.com/binimum/am-lyrics",
-            linkStyles = linkStyles,
-        )
-        CreditLine(
-            what = "Beat This!",
-            why = "on-device beat tracking for Automix — MIT",
-            url = "https://github.com/mir-aidj/all-in-one",
-            linkStyles = linkStyles,
-        )
-        CreditLine(
-            what = "Jetpack Compose & Media3",
-            why = "the UI toolkit and the audio engine — Apache-2.0",
-            url = "https://developer.android.com/jetpack",
-            linkStyles = linkStyles,
-        )
-        CreditLine(
-            what = "LRCLIB",
-            why = "synchronised lyrics",
-            url = "https://lrclib.net",
-            linkStyles = linkStyles,
-        )
-
         Spacer(Modifier.height(10.dp))
         Text(
             text = "Not affiliated with YouTube or Google. Music comes from the sources you " +

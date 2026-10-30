@@ -67,7 +67,12 @@ val addonSigningSecret: String = (
 val listenTogetherServer: String = (
     localProps.getProperty("LISTEN_TOGETHER_SERVER")
         ?: System.getenv("LISTEN_TOGETHER_SERVER")
-        ?: "https://lossless-listen-together.onrender.com"
+        // A host that is actually running. The previous default,
+        // lossless-listen-together.onrender.com, was never deployed — every
+        // party create reached Render's edge and came back "Party server said
+        // 404". Override with LISTEN_TOGETHER_SERVER in local.properties (or as
+        // a repo secret for CI) to point at an instance of backend/ of your own.
+        ?: "https://bitchord-listen-together.onrender.com"
     ).trim().trimEnd('/')
 
 // See the root build.gradle.kts: one version for the phone and its watch app.

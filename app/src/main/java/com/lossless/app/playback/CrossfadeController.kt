@@ -168,6 +168,11 @@ class CrossfadeController(
      */
     private val analysisRunningFor: (MediaItem) -> Boolean = { false },
     /**
+     * Why a media item's analysis came back empty, for the stats line. Only
+     * ever read to explain a "failed" that would otherwise say nothing.
+     */
+    private val analysisFailure: (MediaItem) -> String? = { null },
+    /**
      * The track about to be loaded onto the standby player, announced at the
      * moment [begin] arms rather than at the handoff.
      *
@@ -2726,7 +2731,10 @@ class CrossfadeController(
             val state = stateOf(target, analysis)
             if (state == TrackAnalysisState.ANALYSING) return "analysing…"
             if (state == TrackAnalysisState.WAITING) return "waiting"
-            if (state == TrackAnalysisState.FAILED || !analysis.isUsable) return "failed"
+            if (state == TrackAnalysisState.FAILED || !analysis.isUsable) {
+                val why = analysisFailure(target)?.takeIf { it.isNotBlank() }
+                return if (why != null) "failed · $why" else "failed"
+            }
             val side = if (outgoing) analysis.tailBeats else analysis.headBeats
             val bpm = side?.bpm ?: analysis.bpm
             val confidence = side?.confidence ?: analysis.beatConfidence

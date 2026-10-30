@@ -211,6 +211,17 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     private val badRenditions = ConcurrentHashMap.newKeySet<String>()
 
     /**
+     * Why a track came back unmeasured, kept only so the Automix stats line can
+     * say something more useful than "failed". Not persisted and not part of
+     * [TrackAnalysis]: this is a sentence for a human, not evidence the
+     * planner may act on.
+     */
+    private val failureReasons = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** The last reason [trackId]'s analysis came back empty, or null if it hasn't failed. */
+    fun failureReason(trackId: String): String? = failureReasons[trackId]
+
+    /**
      * Cache keys already put through the whole-track pass, whatever came of it.
      *
      * What reopens a track that was written off: a copy of it nobody has read
@@ -443,6 +454,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     val whole = outcome.analysis
                     if (whole != null) {
                         results[trackId] = whole
+                        failureReasons.remove(trackId)
                         provisional.remove(trackId)
                         shortDecodes.remove(trackId)
                         // Only the whole-track pass is persisted. A head result
@@ -460,6 +472,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         // session. Any provisional head result already published
                         // stays: a partial analysis beats an empty one.
                         Log.w(TAG, "Giving up on $trackId after $MAX_SHORT_DECODE_ATTEMPTS short decodes")
+                        failureReasons[trackId] = "the copy kept decoding short " +
+                            "($MAX_SHORT_DECODE_ATTEMPTS tries)"
                         if (trackId !in provisional) {
                             results[trackId] = TrackAnalysis(
                                 status = TrackAnalysis.STATUS_READY,
@@ -489,6 +503,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 // [headWorthTrying] has already made sure the head is not tried
                 // twice, so this cannot spin.
                 if (usableComplete) {
+                    failureReasons[trackId] = error.message?.takeIf { it.isNotBlank() }
+                        ?: ("decode failed: " + error.javaClass.simpleName)
                     // Recorded as ready-but-empty so a track that cannot be
                     // analysed is not retried on every tick for the rest of the
                     // session.
@@ -1567,6 +1583,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         restoreAttempted.clear()
         shortDecodes.clear()
         badRenditions.clear()
+        failureReasons.clear()
         triedRenditions.clear()
         discarded.clear()
         tracker.release()

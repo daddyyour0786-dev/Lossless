@@ -291,11 +291,6 @@ fun SourcesScreen(
             AddSourceRow(
                 onClick = { onEditSource(SourceConfig(kind = SourceKind.ADDON)) },
             )
-            // Where those links come from. A LastWave addon is a personal
-            // endpoint with a token in it — there is nothing to add until one
-            // has been issued — so the row that says so sits directly beneath
-            // the one that asks for the URL.
-            LastWaveAddonRow()
         }
 
         // A personal library rather than a catalogue in the order above: it
@@ -667,58 +662,6 @@ private fun AddSourceRow(onClick: () -> Unit) {
     }
 }
 
-/**
- * A way to get an addon link, for the listener who has none.
- *
- * LastWave's addon network (lastwaveaddons.clashprojects.qd.je) issues one
- * personal endpoint per account — `/a/<token>` — and Lossless signs every call
- * to it with the key that network hands out, which is what makes those addons
- * work here at all. See AddonSigning.
- *
- * It is a link out rather than a sign-up form: the account is verified against
- * Telegram or Discord, which is not something an app can do on someone's behalf.
- */
-@Composable
-private fun LastWaveAddonRow() {
-    val context = LocalContext.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable {
-                runCatching {
-                    context.startActivity(
-                        Intent(Intent.ACTION_VIEW, Uri.parse(LASTWAVE_ADDONS_URL)),
-                    )
-                }
-            }
-            .heightIn(min = 56.dp)
-                        .padding(start = ROW_INSET + 24.dp + ICON_GAP, end = ROW_INSET, top = 10.dp, bottom = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = stringResource(R.string.lastwave_addon_title),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = stringResource(R.string.lastwave_addon_detail),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 3,
-            )
-        }
-        Icon(
-            imageVector = Icons.Rounded.OpenInNew,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(18.dp),
-        )
-    }
-}
-
-/** Where a LastWave addon endpoint is issued. */
-internal const val LASTWAVE_ADDONS_URL = "https://lastwaveaddons.clashprojects.qd.je"
 
 /**
  * Asks for Nearby devices so the Bluetooth codec can be read — the only way an
@@ -1094,13 +1037,13 @@ internal fun SourceEditorAlert(
         } else {
             config.displayName
         },
-        description = stringResource(R.string.addon_url_description, LASTWAVE_ADDONS_URL),
+        description = stringResource(R.string.addon_url_description),
         urlValue = baseUrl,
         // A result describes the address it was run against, so the moment that
         // address is edited it stops being true and is cleared. Left up, it
         // would report "Connected" over a URL nobody has tried.
         onUrlChange = { baseUrl = it; status = null },
-        urlPlaceholder = "$LASTWAVE_ADDONS_URL/a/your-token",
+        urlPlaceholder = "https://example.com/addon",
         status = status,
         statusIsGood = statusIsGood,
         testing = busy,

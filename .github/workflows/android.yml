@@ -26,23 +26,21 @@ jobs:
           distribution: "temurin"
           cache: gradle
 
-      # ubuntu-latest has an Android SDK, but not this build's compileSdk (37)
-      # and not the CMake the native analysis targets need. Installed here rather
-      # than left to the Gradle plugin's auto-download, which is silent when it
-      # fails and leaves you reading a "compileSdk 37 not found" some minutes
-      # later. Best-effort on purpose: if a package name has moved, the plugin's
-      # own download still gets a chance, and the step does not fail the build.
+      # ubuntu-latest ships an Android SDK but not always this build's pieces.
+      # sdkmanager is not on PATH in the runner's shell, so it is located
+      # explicitly; if that fails at all, Gradle's own download is what actually
+      # installs NDK and CMake on this project (it did, on the first run).
       - name: Android SDK components
         run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-37" \
-            "build-tools;37.0.0" \
-            "cmake;3.22.1" \
-            "ndk;27.0.12077973" > /dev/null 2>&1 || \
-          echo "::warning::sdkmanager could not install everything; letting Gradle try."
-
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SDK" ] || SDK="$(command -v sdkmanager || true)"
+          if [ -x "$SDK" ]; then
+            "$SDK" --install "platforms;android-37" "build-tools;37.0.0" \
+              "cmake;3.22.1" "ndk;27.0.12077973" > /dev/null 2>&1 \
+              || echo "::warning::sdkmanager installed only some of it — Gradle fetches the rest."
+          else
+            echo "::notice::No sdkmanager on PATH — Gradle fetches SDK, NDK and CMake itself."
+          fi
 
       - name: Write local.properties
         env:

@@ -324,6 +324,10 @@
     <string name="show_listen_together_button_subtitle">Off, the player shows only the audio output button between lyrics and the queue</string>
     <string name="app_icon">App icon</string>
     <string name="app_icon_default">Default</string>
+    <string name="app_icon_dark" translatable="false">Dark</string>
+    <string name="app_icon_graphite" translatable="false">Graphite</string>
+    <string name="app_icon_glass_light" translatable="false">Glass light</string>
+    <string name="app_icon_glass_dark" translatable="false">Glass dark</string>
     <string name="app_icon_monochrome" translatable="false">Monochrome</string>
     <string name="theme">Theme</string>
     <string name="font">Font</string>
@@ -607,9 +611,7 @@
     <string name="max_delay_subtitle">Maximum scrobble delay in seconds</string>
     <string name="min_song_duration">Minimum song duration</string>
     <string name="min_song_duration_subtitle">Shorter songs will not scrobble</string>
-    <string name="addon_url_description">Paste your addon link — either its root or its manifest.json. A LastWave addon link carries your own token in it, like %1$s/a/your-token. Lossless signs every request to it and reads what it can search and stream.</string>
-    <string name="lastwave_addon_title">Get a LastWave addon</string>
-    <string name="lastwave_addon_detail">Create an account to get your personal addon link — up to 500 lossless songs a day, verified through Telegram or Discord.</string>
+    <string name="addon_url_description">Paste the addon\'s address — either its root or its manifest.json. Lossless reads its manifest, then searches and streams what it offers.</string>
     <string name="monthly_listeners">%1$s monthly listeners</string>
     <string name="name">Name</string>
     <string name="no_playlists_yet">No playlists yet. Use the row above to create one.</string>

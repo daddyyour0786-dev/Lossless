@@ -1,0 +1,130 @@
+name: Preview APK
+
+# A build to actually run on a phone, without cutting a release.
+#
+# Why this exists: android.yml builds assembleProdDebug, and a debug build is
+# the slow one — no R8, every composable in the shape the compiler emits in
+# debug, resource shrinking off. On a fast phone that reads as jank. This job
+# builds exactly what a release ships (prodRelease, R8, shrunk resources) and
+# attaches it to the run, so `Actions -> Preview APK -> Run workflow -> the
+# artifact at the bottom of the run` gives you a smooth build in one click.
+#
+# Signing: with KEYSTORE_BASE64 set it is signed with your real release key, so
+# it installs over a released build like any update. Without it, a throwaway key
+# is generated per run and the APK is installable on its own as long as nothing
+# else signed differently is installed under the same package.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK components
+        run: |
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SDK" ] || SDK="$(command -v sdkmanager || true)"
+          if [ -x "$SDK" ]; then
+            "$SDK" --install "platforms;android-37" "build-tools;37.0.0" \
+              "cmake;3.22.1" "ndk;27.0.12077973" > /dev/null 2>&1 \
+              || echo "::warning::sdkmanager installed only some of it — Gradle fetches the rest."
+          else
+            echo "::notice::No sdkmanager on PATH — Gradle fetches SDK, NDK and CMake itself."
+          fi
+
+      # A release build cannot be left unsigned (it would install nothing), so
+      # this always writes keystore.properties — with the repo's key when there
+      # is one, and with a per-run key when there is not.
+      - name: Write signing config
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "${KEYSTORE_BASE64:-}" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > lossless-release.jks
+            store_pass="$KEYSTORE_PASSWORD"
+            alias="$KEY_ALIAS"
+            key_pass="$KEY_PASSWORD"
+            echo "::notice::Signed with the repository's release key."
+          else
+            keytool -genkeypair -keystore lossless-release.jks \
+              -storepass previewpreview -keypass previewpreview \
+              -alias preview -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Lossless preview" > /dev/null 2>&1
+            store_pass=previewpreview
+            alias=preview
+            key_pass=previewpreview
+            echo "::warning::No KEYSTORE_BASE64 secret — this APK is signed with a throwaway key. Uninstall any other Lossless before installing it, and uninstall it again before installing a release build."
+          fi
+          {
+            echo "storeFile=lossless-release.jks"
+            echo "storePassword=$store_pass"
+            echo "keyAlias=$alias"
+            echo "keyPassword=$key_pass"
+          } > keystore.properties
+
+      - name: Write local.properties
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          LISTEN_TOGETHER_SERVER: ${{ secrets.LISTEN_TOGETHER_SERVER }}
+        run: |
+          # No sdk.dir line: the runner exports ANDROID_HOME/ANDROID_SDK_ROOT and
+          # settings.gradle.kts reads those itself. An empty sdk.dir here would
+          # make it think this machine has no SDK and skip :app entirely.
+          : > local.properties
+          [ -n "${LASTFM_API_KEY:-}" ] && echo "LASTFM_API_KEY=$LASTFM_API_KEY" >> local.properties
+          [ -n "${LASTFM_SECRET:-}" ] && echo "LASTFM_SECRET=$LASTFM_SECRET" >> local.properties
+          [ -n "${LISTEN_TOGETHER_SERVER:-}" ] && echo "LISTEN_TOGETHER_SERVER=$LISTEN_TOGETHER_SERVER" >> local.properties
+          exit 0
+
+      - name: Build the optimised APKs
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleProdRelease
+
+      # Named after the release assets, so testing a preview and then receiving
+      # the same version through the in-app updater are the same install.
+      - name: Name the APKs
+        id: apks
+        run: |
+          version="$(sed -n 's/^extra\["losslessVersionName"\] = "\([^"]*\)".*/\1/p' build.gradle.kts)"
+          mkdir -p out
+          shopt -s nullglob
+          for apk in app/build/outputs/apk/prod/release/*.apk; do
+            base="$(basename "$apk" .apk)"
+            name="Lossless-$version.apk"
+            for abi in armeabi-v7a arm64-v8a x86_64; do
+              case "$base" in
+                *"$abi"*) name="Lossless-$version_$abi.apk" ;;
+              esac
+            done
+            cp "$apk" "out/$name"
+            echo "  $name"
+          done
+          count="$(ls -1 out/*.apk 2>/dev/null | wc -l)"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::No APKs were produced — check the build step above."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lossless-${{ steps.apks.outputs.version }}-preview
+          path: out/*.apk
+          if-no-files-found: error
