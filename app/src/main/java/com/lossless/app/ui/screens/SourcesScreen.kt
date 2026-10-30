@@ -692,7 +692,7 @@ private fun LastWaveAddonRow() {
                 }
             }
             .heightIn(min = 56.dp)
-            .padding(start = ROW_INSET + 24.dp + ICON_GAP, end = ROW_INSET, vertical = 10.dp),
+                        .padding(start = ROW_INSET + 24.dp + ICON_GAP, end = ROW_INSET, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
