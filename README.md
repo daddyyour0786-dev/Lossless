@@ -1,8 +1,11 @@
 <div align="center">
 
 <br/>
-
-<img src="Banner_blac.webp" alt="Lossless app icon" width="180" />
+<img
+  src="Banner_blac.webp"
+  alt="Lossless app icon"
+  style="width: 50%; max-width: 600px; height: auto;"
+/>
 
 # Lossless
 
