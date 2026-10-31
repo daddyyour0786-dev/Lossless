@@ -33,6 +33,9 @@ import com.lossless.app.data.sources.SourceStream
 import com.lossless.app.data.sources.TrackMatcher
 import com.lossless.app.download.Downloads
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -112,6 +115,24 @@ object AudioCache {
      * as that question can be asked, not to be worth anything on its own.
      */
     private const val LOCK_PROBE_BYTES = 64L * 1024
+
+    /**
+     * How a read-ahead range is split across connections.
+     *
+     * One [CacheWriter] is one sequential HTTP read, and on a phone that is
+     * nowhere near what the link can carry: a measured 3.3 MB analysis head took
+     * 1057 ms — about 25 Mbit/s on a handset sitting on far more. Nothing in
+     * that transfer was slow except that there was only one of it. A range is
+     * therefore cut into lanes that run at once, each still an ordinary [fetch]
+     * into its own, non-overlapping part of the file.
+     *
+     * Three, not eight: past a handful of connections a single CDN edge stops
+     * scaling and starts charging for the handshakes, and the point is to fill
+     * the link during the second or two a track spends being prepared — not to
+     * win a benchmark.
+     */
+    private const val FETCH_LANE_BYTES = 1024L * 1024
+    private const val FETCH_LANES = 3
 
     /**
      * How far into a rendition [cachedPrefixBytes] looks when its real length
@@ -1608,7 +1629,7 @@ object AudioCache {
             if (pendingQueue.firstOrNull() != videoId) return false
             val length = minOf(CHUNK_BYTES, total - position)
             if (cache.getCachedBytes(videoId, position, length) < length) {
-                fetch(videoId, position, length)
+                fetchInLanes(videoId, position, length)
                 // Written nowhere means the entry is held elsewhere; the rest
                 // of this pass would be just as wasted. See [fetch] for why
                 // this can be true even though the fetch just above returned
@@ -1900,7 +1921,7 @@ object AudioCache {
                     TrackLog.w(TAG, "analysis head round for $videoId skipped: partial is held elsewhere", videoId)
                     return@launch
                 }
-                fetch(
+                fetchInLanes(
                     cacheKey = videoId,
                     // Do not inherit a JioSaavn/lossless StreamChoice from
                     // playback. The base key is reserved for the lightweight
@@ -2367,6 +2388,49 @@ object AudioCache {
         }
         pull(cacheKey, uri, position, length, pinKey)
     }
+
+    /**
+     * [fetch] over several connections at once — see [FETCH_LANES].
+     *
+     * The lanes are disjoint ranges of the same track, so each one writes its
+     * own part of the entry and none of them waits on another. A lane that
+     * fails is logged and dropped rather than cancelling its siblings: part of a
+     * head on disk is worth more than none, and every caller here already copes
+     * with a short result — [requestAnalysisHead] substitutes another rendition,
+     * [cacheWholeOnce] measures what landed and decides from that.
+     */
+    private suspend fun fetchInLanes(
+        cacheKey: String,
+        uri: Uri,
+        position: Long,
+        length: Long,
+        pinKey: Boolean = false,
+    ) {
+        if (length <= FETCH_LANE_BYTES) {
+            fetch(cacheKey, uri, position, length, pinKey)
+            return
+        }
+        val lanes = minOf(FETCH_LANES.toLong(), (length + FETCH_LANE_BYTES - 1) / FETCH_LANE_BYTES)
+            .toInt()
+        val span = (length + lanes - 1) / lanes
+        coroutineScope {
+            (0 until lanes).mapNotNull { lane ->
+                val start = position + lane * span
+                val end = minOf(position + length, start + span)
+                if (end <= start) return@mapNotNull null
+                async {
+                    runCatching { fetch(cacheKey, uri, start, end - start, pinKey) }
+                        .onFailure {
+                            TrackLog.d(TAG, "lane $lane of $cacheKey stopped: ${it.message}", about = cacheKey)
+                        }
+                }
+            }.awaitAll()
+        }
+    }
+
+    /** [fetchInLanes] for a plain video id, over the same URI [fetch] builds. */
+    private suspend fun fetchInLanes(videoId: String, position: Long, length: Long) =
+        fetchInLanes(videoId, Uri.parse("lossless://watch?v=$videoId"), position, length)
 
     /** The actual network pull behind [fetch], unconditional and unchecked. */
     private suspend fun pull(cacheKey: String, uri: Uri, position: Long, length: Long, pinKey: Boolean) {

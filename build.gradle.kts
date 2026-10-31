@@ -53,8 +53,8 @@ buildscript {
  * newest release tag, so a version that did not move means an update nobody is
  * ever offered.
  */
-extra["losslessVersionCode"] = 4
-extra["losslessVersionName"] = "0.1.3"
+extra["losslessVersionCode"] = 5
+extra["losslessVersionName"] = "0.1.4"
 
 /*
  * Bump this by hand before cutting each sideloaded test build ("beta2",

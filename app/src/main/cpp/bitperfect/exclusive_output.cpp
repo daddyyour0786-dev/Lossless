@@ -251,7 +251,7 @@ public:
 Handles<ExclusiveOutput> outputs;
 } // namespace
 
-#define JNI_EXCLUSIVE(name) Java_com_music_lossless_playback_audio_bitperfect_ExclusiveNative_##name
+#define JNI_EXCLUSIVE(name) Java_com_lossless_app_playback_audio_bitperfect_ExclusiveNative_##name
 
 extern "C" {
 JNIEXPORT jlong JNICALL JNI_EXCLUSIVE(open)(JNIEnv *env, jobject, jint rate, jint channels, jint bits,
