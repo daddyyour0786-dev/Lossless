@@ -2,7 +2,7 @@
 
 <br/>
 
-<img src="Logo.png" alt="Lossless app icon" width="180" />
+<img src="Banner_blac.webp" alt="Lossless app icon" width="180" />
 
 # Lossless
 
