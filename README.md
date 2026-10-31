@@ -4,7 +4,7 @@
 <img
   src="Banner_blac.webp"
   alt="Lossless app icon"
-  style="width: 50%; max-width: 600px; height: auto;"
+  style="width: 100%; max-width: 1200px; height: auto;"
 />
 
 # Lossless
