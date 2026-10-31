@@ -32,6 +32,7 @@ import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.util.UnstableApi
+import com.lossless.app.data.TrackLog
 import com.lossless.app.data.YtMusicRepository
 import com.lossless.app.data.listentogether.ListenTogether
 import com.lossless.app.data.model.SearchFilter
@@ -222,6 +223,25 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     fun failureReason(trackId: String): String? = failureReasons[trackId]
 
     /**
+     * Records why a track is going unanalysed, where somebody can read it.
+     *
+     * Two places, because the obvious one is gone in a release build: the
+     * Analyzer's own `Log.d`/`Log.w` lines are stripped by R8 (see
+     * proguard-rules.pro), so the only surviving channel is [TrackLog] — the
+     * buffer Copy Log reads — plus [failureReasons], which is what the AutoMix
+     * stats line prints after the word "failed".
+     *
+     * Written once per distinct reason rather than once per tick: [request] runs
+     * on every position update, and a track waiting on its download would
+     * otherwise fill the log with the same sentence four times a second.
+     */
+    private fun noteFailure(trackId: String, reason: String) {
+        if (failureReasons.put(trackId, reason) != reason) {
+            TrackLog.d(TAG, "Not analysing $trackId: $reason", about = trackId)
+        }
+    }
+
+    /**
      * Cache keys already put through the whole-track pass, whatever came of it.
      *
      * What reopens a track that was written off: a copy of it nobody has read
@@ -333,7 +353,14 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             restoreOnce(trackId)
             return
         }
-        val analysisUri = analysisUriFor(trackId, uri) ?: return
+        val analysisUri = analysisUriFor(trackId, uri) ?: run {
+            // The one door every unanalysable track leaves by, and it used to
+            // leave silently. An add-on row and a source track whose YouTube
+            // match has not landed yet both come through here, and both showed
+            // up in AutoMix as nothing more than "failed".
+            noteFailure(trackId, "this track has no copy that can be analysed yet")
+            return
+        }
 
         // Only the canonical YouTube rendition of this recording will do, not
         // the source substitute the player happens to be on: see
@@ -420,6 +447,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // which is a no-op after the first call and for anything that isn't
             // a YouTube-backed track.
             cache.requestAnalysisHead(analysisUri)
+            noteFailure(trackId, "waiting for the first bytes of the track to arrive")
             return
         }
         if (!running.add(trackId)) return
@@ -481,6 +509,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                                 duration = durationSeconds,
                             )
                         }
+                    } else {
+                        // Decoded to its end but yielded no grid: corrupt,
+                        // longer than it claims, or silence. Either way the
+                        // stats line should say so rather than "failed".
+                        noteFailure(trackId, "the audio decoded but held no beat grid")
                     }
                 } else {
                     // Marked before it is published, so a reader on the playback

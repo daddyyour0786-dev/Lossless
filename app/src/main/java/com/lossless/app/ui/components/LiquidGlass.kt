@@ -70,15 +70,22 @@ private const val SURFACE_OPACITY = 0.4f
 /**
  * Resolution fraction the glass surface records and processes its backdrop at.
  *
- * A third, which is what Echo's `glassResolutionScale` comes to at this blur
- * radius. It was briefly raised to a half while the sharp-text bug was being
+ * A quarter, down from the third Echo's `glassResolutionScale` comes to at this
+ * blur radius: on a 1440p panel a third was still a measurable cost per frame
+ * with the glass on — the panel is redrawn into a RenderNode, colour-matrixed,
+ * blurred and lens-refracted once per surface, and a third covers 43% more
+ * pixels than a quarter. The blur is what hides the resample either way, so the
+ * visible difference is nil and the frame cost is not. Raise it back toward 0.5
+ * only if edge aliasing ever shows on a large display at the rim of a bar.
+ *
+ * It was briefly raised to a half while the sharp-text bug was being
  * chased — wrongly, as it turned out: the cause was a transparent backdrop, not
- * the resample (see MainActivity's `paintBackdrop`). A third is nine times fewer
- * pixels than full resolution through the colour matrix, the blur and the lens
- * shader, on as many as six surfaces at once in the middle of a fold, and the
- * blur is what hides the upscale.
+ * the resample (see MainActivity's `paintBackdrop`). A quarter is sixteen times
+ * fewer pixels than full resolution through the colour matrix, the blur and the
+ * lens shader, on as many as six surfaces at once in the middle of a fold, and
+ * the blur is what hides the upscale.
  */
-private const val GLASS_RESOLUTION_SCALE = 0.33f
+private const val GLASS_RESOLUTION_SCALE = 0.25f
 
 /**
  * The hairline along a bar's edge, and what stands in for the glass rim
