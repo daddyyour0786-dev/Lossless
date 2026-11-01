@@ -190,6 +190,70 @@ jobs:
           ls -l out/
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      # This body used to be a literal string right here, so every release said
+      # the same thing: how to install it, and nothing about what changed. The
+      # notes now come from `docs/release-notes/<version>.md` when that file
+      # exists, and otherwise from the commit subjects since the previous tag.
+      # The install blurb is still there, but as a footer under the change list
+      # rather than instead of it.
+      - name: Write the release notes
+        run: |
+          version="${{ steps.apks.outputs.version }}"
+          tag="$GITHUB_REF_NAME"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          fi
+          # Everything this release adds, measured against the last tag before
+          # it. `git describe` rather than a version arithmetic because the tags
+          # are not all prefixed the same way (0.1.6 vs v0.1.7).
+          previous="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)"
+          echo "version=$version tag=$tag previous=${previous:-<none>}"
+
+          notes="out/release-notes.md"
+          mkdir -p out
+          handwritten="docs/release-notes/${version}.md"
+
+          if [ -f "$handwritten" ]; then
+            echo "Using the handwritten notes in $handwritten."
+            cp "$handwritten" "$notes"
+          else
+            echo "No $handwritten — summarising the commits since $previous."
+            if [ -n "$previous" ]; then range="${previous}..HEAD"; else range="HEAD"; fi
+            {
+              echo "Lossless ${version}"
+              echo
+              echo "### What changed"
+              echo
+              # Merge commits say nothing; neither do the version bump itself,
+              # preview/CI plumbing, or a bare "wip".
+              git log --no-merges --pretty=format:'- %s' "$range" \
+                | grep -viE '^- (release|bump|preview|check|ci)\b' \
+                | grep -viE '^- (wip|merge)\b' \
+                || echo "- Housekeeping only — no user-visible changes in this build."
+              echo
+            } > "$notes"
+          fi
+
+          {
+            echo
+            echo "---"
+            echo
+            echo "### Downloads"
+            echo
+            echo "Two builds, one per architecture: \`_arm64-v8a\` for any phone from"
+            echo "roughly the last eight years, \`_armeabi-v7a\` for older 32-bit ones."
+            echo "Both install over an earlier version and keep your library, downloads"
+            echo "and sign-ins, and the in-app updater picks the right one by itself —"
+            echo "or say yes to the prompt the app shows the next time it is opened."
+            if [ -n "$previous" ]; then
+              echo
+              echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${previous}...${tag}"
+            fi
+          } >> "$notes"
+
+          echo "--- release notes ---"
+          cat "$notes"
+
       - name: Publish the release
         uses: softprops/action-gh-release@v2
         with:
@@ -197,15 +261,8 @@ jobs:
           name: Lossless ${{ steps.apks.outputs.version }}
           draft: false
           prerelease: false
-          generate_release_notes: true
+          # The body is ours now, changelog link included, so GitHub's own
+          # generated notes are off — with a body they are ignored anyway.
+          generate_release_notes: false
+          body_path: out/release-notes.md
           files: out/*.apk
-          body: |
-            Lossless ${{ steps.apks.outputs.version }}
-
-            Install the APK below, or just wait — every running copy of Lossless
-            offers this update inside the app the next time it is opened.
-
-            Two builds, one per architecture: `_arm64-v8a` for every phone from
-            roughly the last eight years, `_armeabi-v7a` for older 32-bit ones.
-            Both install over an earlier version and keep your library, downloads
-            and sign-ins; the in-app updater picks the right one by itself.
