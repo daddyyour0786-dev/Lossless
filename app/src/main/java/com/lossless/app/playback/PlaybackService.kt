@@ -5198,7 +5198,10 @@ class PlaybackService : MediaLibraryService() {
         into.skipSilenceEnabled = out.skipSilenceEnabled
         into.repeatMode = out.repeatMode
         into.shuffleModeEnabled = out.shuffleModeEnabled
-        into.setPlaybackSpeed(out.playbackSpeed)
+        // `getPlaybackSpeed()` does not exist on Media3's Player — only
+        // `setPlaybackSpeed` and `getPlaybackParameters` — so the rate is read
+        // off the parameters, which is what the crossfade controller does too.
+        into.setPlaybackSpeed(out.playbackParameters.speed)
         // The crossfade controller holds a track's end on whichever player is
         // the outgoing side of a blend, and this one may have been that player
         // minutes ago. Left set, the upgraded track would stop dead at its own
