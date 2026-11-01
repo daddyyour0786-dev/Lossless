@@ -1158,6 +1158,84 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    /**
+     * The decoder and the AudioTrack a player comes up on *before* it can be
+     * heard, held until [publishArmedOutput] can hand them over.
+     *
+     * [formatListener] is the thing that publishes both, and it only ever
+     * listens to the player the session is pointed at. A handoff — a crossfaded
+     * track, a quality upgrade, a version swap — brings the incoming stream up
+     * on the *idle* player first, and everything that identifies it is
+     * configured there: the decoder is created, the AudioTrack is opened, and
+     * both events fire on a player with no analytics listener attached yet,
+     * because [adoptPlayer] only moves it afterwards.
+     *
+     * Nothing was listening, so nothing was published, and the last values to
+     * reach [AudioOutputStatus] stayed there. Reported on an S24 Ultra: a 96kHz
+     * FLAC stream whose panel read `c2.android.opus.decoder`, because that is
+     * what the player it replaced had been decoding before the cross-over. The
+     * Track Info rows were right — they are read off the player live — and the
+     * Decoder row described a player that had already been retired.
+     *
+     * Captured rather than published on the spot: publishing mid-arm would fire
+     * [formatListener]'s route work while the outgoing player is still the
+     * audible one, which is the one thing a cross-over must not do.
+     */
+    @Volatile
+    private var armedDecoder: Pair<String?, String>? = null
+
+    @Volatile
+    private var armedAudioTrack: Pair<String?, AudioSink.AudioTrackConfig>? = null
+
+    /** Attached to every player [buildPlayer] makes — see [armedDecoder]. */
+    private val armCapture = object : AnalyticsListener {
+        override fun onAudioDecoderInitialized(
+            eventTime: AnalyticsListener.EventTime,
+            decoderName: String,
+            initializedTimestampMs: Long,
+            initializationDurationMs: Long,
+        ) {
+            armedDecoder = eventTime.mediaId() to decoderName
+        }
+
+        override fun onAudioTrackInitialized(
+            eventTime: AnalyticsListener.EventTime,
+            audioTrackConfig: AudioSink.AudioTrackConfig,
+        ) {
+            armedAudioTrack = eventTime.mediaId() to audioTrackConfig
+        }
+    }
+
+    /**
+     * Publishes what the player that has just become audible was configured
+     * with, if [armCapture] saw it, and forgets it either way.
+     *
+     * Keyed by media id: a decoder is reused across tracks of the same codec, so
+     * the captured name can be older than the stream it would be published for.
+     * A name describing a different track is dropped rather than shown — an
+     * absent decoder row is honest, a stale one is what this exists to fix.
+     */
+    private fun publishArmedOutput(incoming: ExoPlayer) {
+        val playingMediaId = incoming.currentMediaItem?.mediaId
+        armedDecoder?.let { (mediaId, decoderName) ->
+            if (mediaId == null || mediaId == playingMediaId) {
+                AudioOutputStatus.publishDecoder(decoderName)
+                TrackLog.d("AUDIO_OUT", "handoff decoder=$decoderName", about = playingMediaId)
+            }
+        }
+        armedAudioTrack?.let { (mediaId, config) ->
+            if (mediaId == null || mediaId == playingMediaId) {
+                AudioOutputStatus.publishAudioTrack(
+                    encoding = config.encoding,
+                    sampleRateHz = config.sampleRate,
+                    bufferSize = config.bufferSize,
+                )
+            }
+        }
+        armedDecoder = null
+        armedAudioTrack = null
+    }
+
     /** Registered alongside [playbackListener], and moved with it. */
     private val formatListener = object : AnalyticsListener {
         override fun onAudioInputFormatChanged(
@@ -2695,6 +2773,7 @@ class PlaybackService : MediaLibraryService() {
         incoming.addListener(playbackListener)
         incoming.addAnalyticsListener(formatListener)
         adoptFormatOf(incoming)
+        publishArmedOutput(incoming)
 
         mediaSession?.player = newSessionPlayer(incoming, requireNotNull(crossfade))
 
@@ -3534,6 +3613,9 @@ class PlaybackService : MediaLibraryService() {
         // press before that steps to the previous one.
         .setMaxSeekToPreviousPositionMs(BACK_RESTARTS_AFTER_MS)
         .build()
+        // Both players, not just the one that ends up active: whichever of them
+        // is armed next is the one whose decoder nobody else can see.
+        .apply { addAnalyticsListener(armCapture) }
 
     /**
      * Moves the session onto the player the crossfade has just started the
@@ -3567,6 +3649,7 @@ class PlaybackService : MediaLibraryService() {
         incoming.addListener(playbackListener)
         incoming.addAnalyticsListener(formatListener)
         adoptFormatOf(incoming)
+        publishArmedOutput(incoming)
 
         mediaSession?.player = newSessionPlayer(incoming, requireNotNull(crossfade))
 
