@@ -43,7 +43,7 @@ Requires Android 8.0 (API 26) or newer.
 
 ---
 
-## s
+## Addons
 
 Lossless plays lossless audio through **s** — small HTTP servers that answer
 three questions (`/manifest.json`, `/search`, `/stream/{id}`) and hand back FLAC,
