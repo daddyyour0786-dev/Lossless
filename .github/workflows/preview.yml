@@ -23,6 +23,12 @@ concurrency:
 jobs:
   preview:
     runs-on: ubuntu-latest
+    # A hung native build otherwise sits there for the six-hour default.
+    timeout-minutes: 45
+    env:
+      # The one place the preview's ABI is named: the build asks Gradle for it
+      # and the naming step labels the file with it.
+      PREVIEW_ABI: arm64-v8a
     steps:
       - uses: actions/checkout@v4
 
@@ -34,18 +40,6 @@ jobs:
       # Keeps the Gradle build cache between runs — the second preview of the
       # same app is materially faster than the first.
       - uses: gradle/actions/setup-gradle@v4
-
-      - name: Android SDK components
-        run: |
-          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
-          [ -x "$SDK" ] || SDK="$(command -v sdkmanager || true)"
-          if [ -x "$SDK" ]; then
-            "$SDK" --install "platforms;android-37" "build-tools;37.0.0" \
-              "cmake;3.22.1" "ndk;27.0.12077973" > /dev/null 2>&1 \
-              || echo "::warning::sdkmanager installed only some of it — Gradle fetches the rest."
-          else
-            echo "::notice::No sdkmanager on PATH — Gradle fetches SDK, NDK and CMake itself."
-          fi
 
       # A release build cannot be left unsigned (it would install nothing), so
       # this always writes keystore.properties — with the repo's key when there
@@ -111,20 +105,35 @@ jobs:
       # build is the slowest part of the job — three ABIs of ONNX Runtime,
       # FFmpeg and the analyser take roughly three times as long as one. Release
       # still builds all three; this one only has to produce something to hold.
+      #
+      # Two things about `android.injected.build.abi`, both of which cost a run
+      # to learn:
+      #
+      # 1. It is Android Studio's flag, so AGP builds the way Studio does and
+      #    writes the APK to `build/intermediates/apk/<variant>/`, not to
+      #    `build/outputs/apk/<flavour>/<type>/`. The APK was always there; the
+      #    upload was looking in the wrong half of `build/`.
+      # 2. Studio's deploy builds are marked `android:testOnly="true"` in the
+      #    manifest, and the package installer refuses those — "App not
+      #    installed", or "package appears to be invalid". `testOnly=false`
+      #    keeps the optimised build but drops the marking.
       - name: Build the optimised APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleProdRelease -Pandroid.injected.build.abi=arm64-v8a
+          ./gradlew assembleProdRelease \
+            -Pandroid.injected.build.abi=${PREVIEW_ABI:-arm64-v8a} \
+            -Pandroid.injected.testOnly=false \
+            -x lintVitalProdRelease
 
       # Named after the release assets, so testing a preview and then receiving
       # the same version through the in-app updater are the same install.
-      # Found rather than assumed. This step used to glob one exact directory and
-      # report nothing when the glob came back empty, which is how a successful
-      # 8m14s build ended with "No files were found" at the upload and no
-      # explanation of where the APK had gone: `-Pandroid.injected.build.abi`
-      # is a Studio-shaped build, and Studio's APK does not land in the splits'
-      # naming. A search of the whole output tree, with what it found printed,
-      # cannot be silently wrong.
+      #
+      # Found, not assumed. This step has now been wrong twice: first it globbed
+      # `outputs/apk/prod/release/*.apk` and `nullglob` swallowed the miss, then
+      # it searched `build/outputs` and still found nothing, because an injected
+      # build writes under `build/intermediates/apk`. It now looks in both
+      # places, prints every APK it sees and the ABIs inside each one, so the
+      # log answers the question instead of the next run having to.
       - name: Collect the APKs
         id: apks
         run: |
@@ -134,25 +143,32 @@ jobs:
             echo "::error::Could not read losslessVersionName from build.gradle.kts."
             exit 1
           fi
+
+          apks="$(find app/build/outputs/apk app/build/intermediates/apk \
+                    -type f -name '*.apk' 2>/dev/null | sort)"
+          if [ -z "$apks" ]; then
+            echo "::error::No APK under outputs/ or intermediates/. Full tree:"
+            find app/build -maxdepth 4 | head -80
+            exit 1
+          fi
+
           mkdir -p out
-          found=0
           while IFS= read -r apk; do
             base="$(basename "$apk" .apk)"
-            name="Lossless-$version.apk"
+            # AGP puts the ABI in the middle of the file name
+            # (app-arm64-v8a-prod-release.apk); the updater wants it at the end.
+            # A single-ABI IDE build does not put it in the name at all, so fall
+            # back to the ABI that was asked for when there is only one inside.
+            name="Lossless-$version-${PREVIEW_ABI:-arm64-v8a}.apk"
             for abi in armeabi-v7a arm64-v8a x86_64; do
               case "$base" in
                 *"$abi"*) name="Lossless-$version-$abi.apk" ;;
               esac
             done
             cp "$apk" "out/$name"
-            echo "  $apk -> out/$name"
-            found=$((found + 1))
-          done < <(find app/build/outputs -type f -name '*.apk' | sort)
-          if [ "$found" -eq 0 ]; then
-            echo "::error::The build produced no APK at all. Output tree:"
-            find app/build/outputs -maxdepth 5 | head -60
-            exit 1
-          fi
+            natives="$(unzip -l "$apk" 2>/dev/null | grep -o 'lib/[^/]*' | sort -u | tr '\n' ' ')"
+            echo "  $apk -> out/$name  [${natives:-no native libs}]"
+          done <<< "$apks"
           ls -l out/
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
