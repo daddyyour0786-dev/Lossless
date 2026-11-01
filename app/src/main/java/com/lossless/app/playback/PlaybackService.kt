@@ -5599,6 +5599,21 @@ class PlaybackService : MediaLibraryService() {
         .apply {
             playWhenReady = false
             volume = 0f
+            // Which codec proved the upgrade, in the app's own log. This player
+            // is never heard and has no pipeline panel, so its decoder is the
+            // one choice in the app nothing else can show.
+            addAnalyticsListener(
+                object : AnalyticsListener {
+                    override fun onAudioDecoderInitialized(
+                        eventTime: AnalyticsListener.EventTime,
+                        decoderName: String,
+                        initializedTimestampMs: Long,
+                        initializationDurationMs: Long,
+                    ) {
+                        TrackLog.d("AUDIO_OUT", "audition decoder=$decoderName")
+                    }
+                },
+            )
         }
 
     /**
@@ -6883,26 +6898,14 @@ class PlaybackService : MediaLibraryService() {
             // embellishes it, since it is the only AudioTrack encoding Media3
             // will open that carries a 24-bit sample intact.
             setEnableAudioFloatOutput(configuredFloatOutput)
-            // c2.sec.flac.decoder produces one extra 232.2ms timestamp
-            // advance per decoded buffer when Media3 requests float PCM.
-            // Decode FLAC through the platform software codec on affected Samsung devices.
-            setMediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
-                val selector = if (mimeType == MimeTypes.AUDIO_FLAC) {
-                    MediaCodecSelector.PREFER_SOFTWARE
-                } else {
-                    MediaCodecSelector.DEFAULT
-                }
-                val candidates = selector.getDecoderInfos(
-                    mimeType,
-                    requiresSecureDecoder,
-                    requiresTunnelingDecoder,
-                )
-                if (mimeType == MimeTypes.AUDIO_FLAC) {
-                    candidates.filterNot { AudioOutputPolicy.isUnsafeFloatFlacDecoder(it.name) }
-                } else {
-                    candidates
-                }
-            }
+            // FLAC's decoder policy is not set here any more: it is applied in
+            // FfmpegFallbackRenderersFactory.buildAudioRenderers, so that every
+            // player built from that base class obeys it — see flacDecoderPolicy.
+            // It lived in this init block, and the audition player is built from
+            // the bare base class with no subclass at all, so the throwaway
+            // player that *proves* an upgrade was decoding FLAC through
+            // `c2.sec.flac.decoder` while the adopted stream came up on
+            // `c2.android.flac.decoder`.
         }
 
         override fun buildAudioSink(
@@ -9957,7 +9960,7 @@ private open class FfmpegFallbackRenderersFactory(context: Context) : DefaultRen
         super.buildAudioRenderers(
             context,
             extensionRendererMode,
-            withoutPlatformAlac(mediaCodecSelector),
+            withoutPlatformAlac(flacDecoderPolicy(mediaCodecSelector)),
             enableDecoderFallback,
             audioSink,
             eventHandler,
@@ -9972,8 +9975,7 @@ private open class FfmpegFallbackRenderersFactory(context: Context) : DefaultRen
  * [selector] with no decoders for ALAC, so `MediaCodecAudioRenderer` reports
  * it unsupported and the track selector hands it to FFmpeg — unless this
  * build's FFmpeg cannot decode it (an ABI it was not built for), where a
- * vendor codec is still better than none. Wraps rather than replaces, so a
- * subclass's own selector (the FLAC one) keeps working underneath.
+ * vendor codec is still better than none.
  */
 private fun withoutPlatformAlac(selector: MediaCodecSelector) =
     MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
@@ -9981,6 +9983,38 @@ private fun withoutPlatformAlac(selector: MediaCodecSelector) =
             emptyList()
         } else {
             selector.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
+        }
+    }
+
+/**
+ * FLAC on the platform software decoder, and never on the Samsung vendor one.
+ *
+ * `c2.sec.flac.decoder` produces one extra 232.2ms timestamp advance per
+ * decoded buffer once Media3 asks it for float PCM. [AudioOutputPolicy] names
+ * the codecs that do it; this is where a player is told to obey that.
+ *
+ * Applied in [FfmpegFallbackRenderersFactory.buildAudioRenderers] rather than
+ * in a renderers factory's `init`, because it has to cover *every* player built
+ * from that base class and there is one that has no subclass:
+ * [buildAuditionPlayer] builds the bare factory, and that is the player which
+ * proves a quality upgrade before any of it is heard. Traced on an S24 Ultra,
+ * the upgrade was proved through `c2.sec.flac.decoder` at 44.1kHz/16-bit while
+ * the stream it was proving came up on `c2.android.flac.decoder` at 96kHz — the
+ * verdict was being reached on numbers the audible path would never produce.
+ *
+ * `PREFER_SOFTWARE` for FLAC rather than [selector]'s own order: the ordering is
+ * the point, and the default order puts the vendor decoder first. Every other
+ * mime type is passed straight through to whatever selector the factory was
+ * given.
+ */
+private fun flacDecoderPolicy(selector: MediaCodecSelector) =
+    MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+        if (mimeType != MimeTypes.AUDIO_FLAC) {
+            selector.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
+        } else {
+            MediaCodecSelector.PREFER_SOFTWARE
+                .getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
+                .filterNot { AudioOutputPolicy.isUnsafeFloatFlacDecoder(it.name) }
         }
     }
 
