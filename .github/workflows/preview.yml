@@ -118,33 +118,56 @@ jobs:
 
       # Named after the release assets, so testing a preview and then receiving
       # the same version through the in-app updater are the same install.
-      - name: Name the APKs
+      # Found rather than assumed. This step used to glob one exact directory and
+      # report nothing when the glob came back empty, which is how a successful
+      # 8m14s build ended with "No files were found" at the upload and no
+      # explanation of where the APK had gone: `-Pandroid.injected.build.abi`
+      # is a Studio-shaped build, and Studio's APK does not land in the splits'
+      # naming. A search of the whole output tree, with what it found printed,
+      # cannot be silently wrong.
+      - name: Collect the APKs
         id: apks
         run: |
           version="$(sed -n 's/^extra\["losslessVersionName"\] = "\([^"]*\)".*/\1/p' build.gradle.kts)"
+          echo "Version: '$version'"
+          if [ -z "$version" ]; then
+            echo "::error::Could not read losslessVersionName from build.gradle.kts."
+            exit 1
+          fi
           mkdir -p out
-          shopt -s nullglob
-          for apk in app/build/outputs/apk/prod/release/*.apk; do
+          found=0
+          while IFS= read -r apk; do
             base="$(basename "$apk" .apk)"
             name="Lossless-$version.apk"
             for abi in armeabi-v7a arm64-v8a x86_64; do
               case "$base" in
-                *"$abi"*) name="Lossless-$version_$abi.apk" ;;
+                *"$abi"*) name="Lossless-$version-$abi.apk" ;;
               esac
             done
             cp "$apk" "out/$name"
-            echo "  $name"
-          done
-          count="$(ls -1 out/*.apk 2>/dev/null | wc -l)"
-          if [ "$count" -eq 0 ]; then
-            echo "::error::No APKs were produced — check the build step above."
+            echo "  $apk -> out/$name"
+            found=$((found + 1))
+          done < <(find app/build/outputs -type f -name '*.apk' | sort)
+          if [ "$found" -eq 0 ]; then
+            echo "::error::The build produced no APK at all. Output tree:"
+            find app/build/outputs -maxdepth 5 | head -60
             exit 1
           fi
+          ls -l out/
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Upload the APKs
         uses: actions/upload-artifact@v4
         with:
           name: Lossless-${{ steps.apks.outputs.version }}-preview
-          path: out/*.apk
+          # The directory, not a glob: a glob that misses is reported as an
+          # empty artifact, while a directory that is missing says so.
+          path: out/
           if-no-files-found: error
+          # Three days. Artifacts are the one thing here that costs quota:
+          # they are kept out of the 500 MB a free account gets, and an APK is
+          # 56 MB, so a fortnight of previews is gigabytes. The run that
+          # produced it has to survive long enough to be installed from, and
+          # nothing longer. A release's APKs are release *assets*, which are
+          # not counted against this at all.
+          retention-days: 3

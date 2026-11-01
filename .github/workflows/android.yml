@@ -76,3 +76,7 @@ jobs:
         with:
           name: lossless-prod-debug
           path: app/build/outputs/apk/prod/debug/*.apk
+          # See preview.yml: artifact storage is 500 MB for a free account and
+          # a debug APK here is ~450 MB, because it is neither minified nor
+          # split. Three days is long enough to download it and no longer.
+          retention-days: 3
