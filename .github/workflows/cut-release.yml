@@ -1,0 +1,96 @@
+name: Cut release
+
+# One button for a release: move the version, write the notes, tag the result,
+# and publish the signed APKs. Nothing to do locally — no bump script, no
+# checkout, no `git tag`.
+#
+#   Actions -> Cut release -> Run workflow -> patch / minor / major
+#
+# Why it calls `Release` instead of pushing a tag and letting `Release`'s tag
+# trigger pick it up: a tag pushed with a workflow's own GITHUB_TOKEN does not
+# start another workflow run. GitHub suppresses those events so runs cannot
+# chain into each other, which means the tag would be created and nothing would
+# build. `uses:` reaches the same workflow directly instead.
+#
+# The version is not typed in. It is always the current one in
+# build.gradle.kts moved by tools/bump-version.sh, so it cannot disagree with
+# the tag, the APK file name or what a phone compares against.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Which number moves"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      notes:
+        description: "Release notes (Markdown). Leave blank to list the commits"
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.move.outputs.version }}
+      tag: ${{ steps.move.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Tags and history: the bump script reads the version, and the notes
+          # step in `Release` compares against the previous tag.
+          fetch-depth: 0
+
+      - name: Move the version
+        id: move
+        run: |
+          set -euo pipefail
+          git config user.name "Lossless release bot"
+          git config user.email "actions@users.noreply.github.com"
+          bash tools/bump-version.sh "${{ inputs.bump }}"
+          version="$(sed -n 's/^extra\["losslessVersionName"\] = "\([^"]*\)".*/\1/p' build.gradle.kts)"
+          code="$(sed -n 's/^extra\["losslessVersionCode"\] = \([0-9]*\).*/\1/p' build.gradle.kts)"
+          if [ -z "$version" ] || [ -z "$code" ]; then
+            echo "::error::The bump script left build.gradle.kts unreadable."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "Moved to $version (versionCode $code)."
+
+      - name: Write the notes
+        if: ${{ inputs.notes != '' }}
+        env:
+          NOTES: ${{ inputs.notes }}
+        run: |
+          set -euo pipefail
+          mkdir -p docs/release-notes
+          printf '%s\n' "$NOTES" > "docs/release-notes/${{ steps.move.outputs.version }}.md"
+          echo "Wrote docs/release-notes/${{ steps.move.outputs.version }}.md"
+
+      - name: Commit and tag
+        run: |
+          set -euo pipefail
+          git add -A
+          if git diff --cached --quiet; then
+            echo "::error::Nothing to commit — the version did not move."
+            exit 1
+          fi
+          git commit -m "Release ${{ steps.move.outputs.version }}"
+          git tag -a "${{ steps.move.outputs.tag }}" -m "Lossless ${{ steps.move.outputs.version }}"
+          git push origin "HEAD:${{ github.ref_name }}"
+          git push origin "${{ steps.move.outputs.tag }}"
+          echo "Pushed ${{ steps.move.outputs.tag }} at $(git rev-parse --short HEAD)."
+
+  release:
+    needs: version
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.version.outputs.tag }}
+    secrets: inherit

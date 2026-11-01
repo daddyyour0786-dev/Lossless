@@ -22,6 +22,15 @@ on:
       tag:
         description: "Existing tag to build and publish (e.g. v0.1.0)"
         required: true
+  # Called by `Cut release`, which moves the version and tags the result. It
+  # cannot just push the tag and let the trigger above fire: a tag pushed with a
+  # workflow's own GITHUB_TOKEN does not start another run.
+  workflow_call:
+    inputs:
+      tag:
+        description: "Tag to build and publish (e.g. v0.1.8)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -35,6 +44,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # A tag push already has the right ref; a dispatch or a call from
+          # `Cut release` starts on the branch, so the tag is named explicitly.
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -65,11 +77,9 @@ jobs:
       # compares the tag against its own versionName and finds them equal.
       - name: Check the tag matches the build version
         run: |
-          tag="${GITHUB_REF_NAME#v}"
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
-            tag="${tag#v}"
-          fi
+          tag="${{ inputs.tag }}"
+          if [ -z "$tag" ]; then tag="$GITHUB_REF_NAME"; fi
+          tag="${tag#v}"
           build_version="$(sed -n 's/^extra\["losslessVersionName"\] = "\([^"]*\)".*/\1/p' build.gradle.kts)"
           echo "tag=$tag build=$build_version"
           if [ "$tag" != "$build_version" ]; then
@@ -199,10 +209,8 @@ jobs:
       - name: Write the release notes
         run: |
           version="${{ steps.apks.outputs.version }}"
-          tag="$GITHUB_REF_NAME"
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
-          fi
+          tag="${{ inputs.tag }}"
+          if [ -z "$tag" ]; then tag="$GITHUB_REF_NAME"; fi
           # Everything this release adds, measured against the last tag before
           # it. `git describe` rather than a version arithmetic because the tags
           # are not all prefixed the same way (0.1.6 vs v0.1.7).
@@ -257,7 +265,7 @@ jobs:
       - name: Publish the release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          tag_name: ${{ inputs.tag || github.ref_name }}
           name: Lossless ${{ steps.apks.outputs.version }}
           draft: false
           prerelease: false
