@@ -19,10 +19,19 @@ object JamInvite {
         val text = value?.trim() ?: return null
         val prefix = "$ORIGIN/invite/"
         if (!text.startsWith(prefix, ignoreCase = true)) return null
-        val code = text.removePrefix(prefix).substringBefore('?').substringBefore('#')
+        val rest = text.removePrefix(prefix)
+        // /invite/<CODE> (path) and /invite/?code=<CODE> (query) both count. The
+        // path shape is what a verified Android App Link matches; the query shape
+        // is what the site can serve, since a static host has no page at a path
+        // segment and answers 404 for one.
+        val code = if (rest.startsWith("?")) {
+            rest.substringAfter("code=", "").substringBefore('&').substringBefore('#')
+        } else {
+            rest.substringBefore('?').substringBefore('#')
+        }
         if (code.length != CODE_LENGTH || !code.all(Char::isLetterOrDigit)) return null
         return code.uppercase()
     }
 
-    fun url(code: String): String = "$ORIGIN/invite/${code.uppercase()}"
+    fun url(code: String): String = "$ORIGIN/invite/?code=${code.uppercase()}"
 }

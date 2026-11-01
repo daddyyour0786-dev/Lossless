@@ -219,6 +219,20 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     packaging {
+        jniLibs {
+            // Native libraries are stored compressed in the APK instead of
+            // mapped straight out of it. Measured on the 0.1.3 arm64 split:
+            // libonnxruntime.so is 27.3 MB stored and 10.1 MB deflated (-63%),
+            // libffmpegJNI.so 2.0 -> 1.0 MB, libquickjs.so 0.8 -> 0.4 MB — about
+            // 20 MB off a 76 MB download, which is the largest single saving
+            // available without dropping a feature or an ABI.
+            //
+            // The cost is that Android extracts them at install time: the same
+            // bytes land in /data/app that used to sit in the APK, so the app's
+            // footprint on the phone is unchanged, and only the download and
+            // the cold-start mmap path differ.
+            useLegacyPackaging = true
+        }
         resources {
             // SMBJ's BouncyCastle and jspecify both ship this descriptor.
             excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"

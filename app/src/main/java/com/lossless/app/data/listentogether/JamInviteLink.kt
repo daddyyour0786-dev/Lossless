@@ -78,10 +78,20 @@ object JamInviteLink {
             return ParsedJamInvite(code = code, serverUrl = server)
         }
 
-        // 2. Official web domain: https://daddyyour0786-dev.github.io/invite/<CODE>
+        // 2. Official web domain, in either of the two shapes it is written in:
+        //    https://daddyyour0786-dev.github.io/invite/<CODE>      (path)
+        //    https://daddyyour0786-dev.github.io/invite/?code=<CODE> (query)
+        //
+        // The path form is what a verified Android App Link matches and is still
+        // read, because links carrying it are already out in the world. The
+        // query form is what [url] now writes: a GitHub Pages site is static, so
+        // a path segment no file sits behind answers 404 and the invitation is a
+        // dead end for exactly the people it is sent to. `/invite/` is a real
+        // file, so the query form resolves without a server.
         if (scheme == "https" && host == HOST) {
-            val match = INVITE_PATH.matchEntire(uri.path.orEmpty()) ?: return null
-            val code = match.groupValues[1].uppercase()
+            val fromPath = INVITE_PATH.matchEntire(uri.path.orEmpty())?.groupValues?.get(1)
+            val code = (fromPath ?: extractQueryParam(query, "code"))?.let { cleanCode(it) }
+                ?: return null
             return ParsedJamInvite(code = code, serverUrl = server)
         }
 
@@ -90,11 +100,16 @@ object JamInviteLink {
 
     fun url(code: String, customServer: String? = null): String {
         val base = customServer?.trim()?.trimEnd('/')
-        return if (!base.isNullOrBlank() && !base.equals(ORIGIN, ignoreCase = true)) {
-            "$base/invite/${code.uppercase()}"
+        val origin = if (!base.isNullOrBlank() && !base.equals(ORIGIN, ignoreCase = true)) {
+            base
         } else {
-            "$ORIGIN/invite/${code.uppercase()}"
+            ORIGIN
         }
+        // `?code=` rather than `/CODE`: the default origin is a static GitHub
+        // Pages site, where `/invite/ABC123` has no file behind it and answers
+        // 404, while `/invite/?code=ABC123` is the real page. A self-hosted
+        // server reads the query too.
+        return "$origin/invite/?code=${code.uppercase()}"
     }
 
     fun schemeUrl(code: String, customServer: String? = null): String {

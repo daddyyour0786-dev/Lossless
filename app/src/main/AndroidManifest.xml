@@ -229,6 +229,23 @@
                     android:pathPattern="/invite/......" />
             </intent-filter>
 
+            <!-- The same invitation in its query shape, which is the one the app
+                 now writes: https://daddyyour0786-dev.github.io/invite/?code=ABC123
+                 Its own filter because a path pattern and a path prefix cannot
+                 both sit on one data element. Verification is the same single
+                 assetlinks.json for the host; until that file names this app's
+                 certificate, a tap opens the invitation page in a browser, which
+                 is a working page rather than the 404 the path shape gave. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="daddyyour0786-dev.github.io"
+                    android:pathPrefix="/invite" />
+            </intent-filter>
+
             <!-- Custom scheme for Listen Together invites on custom server deployments. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

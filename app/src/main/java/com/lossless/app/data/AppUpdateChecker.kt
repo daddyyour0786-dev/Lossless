@@ -105,11 +105,17 @@ object AppUpdateChecker {
     /**
      * A release carries one universal APK plus a split per ABI:
      *
-     *     Lossless-0.1.0.apk     Lossless-0.1.0_arm64-v8a.apk     ...
+     *     Lossless-0.1.0.apk     Lossless-arm64-v8a.apk     ...
      *
      * so this app's APKs are the ones named with [BuildConfig.UPDATE_APK_PREFIX].
-     * The universal build (no `_ABI` suffix) is taken first, as it installs
-     * anywhere; failing that, the split for this device's ABI. A release with
+     * The split for *this* device is taken first and the universal build only
+     * when there is no split for its ABI. The order used to be the other way
+     * round, which meant every in-app update pulled 171 MB of universal APK
+     * where 76 MB was sitting next to it — the split's whole point.
+     *
+     * Both separators are accepted because the name arrives from two places:
+     * `Lossless-arm64-v8a.apk` from the release workflow's rename step, and
+     * `Lossless_arm64-v8a.apk` from AGP's own split output. A release with
      * neither leaves [UpdateInfo.apkUrl] null and the UI falls back to opening
      * the releases page.
      */
@@ -125,10 +131,11 @@ object AppUpdateChecker {
                 if (ours) name.removeSuffix(".apk").removeSuffix(".APK") to url else null
             }
             .orEmpty()
-        apks.firstOrNull { (name, _) -> '_' !in name }?.second
-            ?: Build.SUPPORTED_ABIS.firstNotNullOfOrNull { abi ->
-                apks.firstOrNull { (name, _) -> name.endsWith("_$abi") }?.second
-            }
+        val abis = Build.SUPPORTED_ABIS.toList()
+        fun isSplit(name: String) = abis.any { name.endsWith("-$it") || name.endsWith("_$it") }
+        abis.firstNotNullOfOrNull { abi ->
+            apks.firstOrNull { (name, _) -> name.endsWith("-$abi") || name.endsWith("_$abi") }?.second
+        } ?: apks.firstOrNull { (name, _) -> !isSplit(name) }?.second
     }.getOrNull()
 
     /**

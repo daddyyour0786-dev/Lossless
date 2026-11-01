@@ -50,6 +50,13 @@ class JamInviteTest {
     }
 
     @Test
+    fun `the query shape the site serves is an invite too`() {
+        assertEquals("ABC123", JamInvite.parse("${JamInvite.ORIGIN}/invite/?code=ABC123"))
+        assertEquals("ABC123", JamInvite.parse("${JamInvite.ORIGIN}/invite/?code=abc123&server=x"))
+        assertNull(JamInvite.parse("${JamInvite.ORIGIN}/invite/?code=ABC12"))
+    }
+
+    @Test
     fun `a built url round-trips`() {
         assertEquals("ZZ99QQ", JamInvite.parse(JamInvite.url("zz99qq")))
     }

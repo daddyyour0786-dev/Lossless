@@ -48,8 +48,10 @@ class JamInviteLinkTest {
 
     @Test
     fun `builds the canonical share URL`() {
+        // The code rides in the query: /invite/ is a real file on the static
+        // site and /invite/ABC123 is not, so the old path shape answered 404.
         assertEquals(
-            "https://daddyyour0786-dev.github.io/invite/ABC123",
+            "https://daddyyour0786-dev.github.io/invite/?code=ABC123",
             JamInviteLink.url("abc123"),
         )
     }
@@ -57,21 +59,36 @@ class JamInviteLinkTest {
     @Test
     fun `builds the custom server share URL`() {
         assertEquals(
-            "https://my-party.onrender.com/invite/ABC123",
+            "https://my-party.onrender.com/invite/?code=ABC123",
             JamInviteLink.url("abc123", "https://my-party.onrender.com"),
         )
         assertEquals(
-            "https://my-party.onrender.com/invite/ABC123",
+            "https://my-party.onrender.com/invite/?code=ABC123",
             JamInviteLink.url("abc123", "https://my-party.onrender.com/"),
         )
         assertEquals(
-            "https://daddyyour0786-dev.github.io/invite/ABC123",
+            "https://daddyyour0786-dev.github.io/invite/?code=ABC123",
             JamInviteLink.url("abc123", ""),
         )
         assertEquals(
-            "https://daddyyour0786-dev.github.io/invite/ABC123",
+            "https://daddyyour0786-dev.github.io/invite/?code=ABC123",
             JamInviteLink.url("abc123", null),
         )
+    }
+
+    @Test
+    fun `parses a query-shaped invite, which is what the site serves`() {
+        assertEquals(
+            "ABC123",
+            JamInviteLink.parse("https://daddyyour0786-dev.github.io/invite/?code=abc123"),
+        )
+        val withServer = JamInviteLink.parseInvite(
+            "https://daddyyour0786-dev.github.io/invite/?code=ABC123&server=https%3A%2F%2Fcustom.example.com",
+        )
+        assertEquals("ABC123", withServer?.code)
+        assertEquals("https://custom.example.com", withServer?.serverUrl)
+        assertNull(JamInviteLink.parse("https://daddyyour0786-dev.github.io/invite/?code=TOOLONG"))
+        assertNull(JamInviteLink.parse("https://daddyyour0786-dev.github.io/invite/?code"))
     }
 
     @Test
@@ -135,7 +152,7 @@ class JamInviteLinkTest {
         } else {
             JamInviteLink.url(code, activePartyHost)
         }
-        assertEquals("https://daddyyour0786-dev.github.io/invite/JAM001", link)
+        assertEquals("https://daddyyour0786-dev.github.io/invite/?code=JAM001", link)
     }
 
     @Test
@@ -147,7 +164,7 @@ class JamInviteLinkTest {
         } else {
             JamInviteLink.url(code, customHost)
         }
-        assertEquals("https://custom.jam.example.com/invite/JAM002", link)
+        assertEquals("https://custom.jam.example.com/invite/?code=JAM002", link)
         assertNotEquals("https://daddyyour0786-dev.github.io/invite/JAM002", link)
     }
 
