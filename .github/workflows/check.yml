@@ -3,6 +3,8 @@ name: Check
 on:
   push:
     branches: [main]
+    # Prose and pictures cannot break a test run.
+    paths-ignore: ['**.md', 'docs/**', 'screenshots/**', '.github/ISSUE_TEMPLATE/**']
   pull_request:
 
 concurrency:
@@ -42,17 +44,13 @@ jobs:
 
       - run: chmod +x gradlew
 
+      # Tests only. This job used to assemble a dev APK as well, which is a
+      # full native build — C++, all three ABIs — on every single push, and
+      # produced an artifact nothing downloads. The question a push asks is
+      # "does this still work", and this answers it. An APK to hold in your
+      # hand is one click away in Preview APK.
       - name: Tests
         run: ./gradlew testDevDebugUnitTest
-
-      - name: Build the dev APK
-        run: ./gradlew assembleDevDebug
-
-      - name: Upload the dev APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: lossless-dev-debug
-          path: app/build/outputs/apk/dev/debug/*.apk
 
       - name: Upload test reports
         if: failure()

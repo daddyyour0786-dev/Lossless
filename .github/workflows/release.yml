@@ -41,7 +41,8 @@ jobs:
         with:
           java-version: "17"
           distribution: "temurin"
-          cache: gradle
+
+      - uses: gradle/actions/setup-gradle@v4
 
       # ubuntu-latest ships an Android SDK but not always this build's pieces.
       # sdkmanager is not on PATH in the runner's shell, so it is located
@@ -137,7 +138,7 @@ jobs:
       - name: Build signed release APKs
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleProdRelease
+          ./gradlew assembleProdRelease
 
       # Renamed to the one shape the updater looks for: `Lossless-<version>` as a
       # universal APK, and `Lossless-<version>_<abi>` for each split. The suffixes

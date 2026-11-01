@@ -31,6 +31,10 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # Keeps the Gradle build cache between runs — the second preview of the
+      # same app is materially faster than the first.
+      - uses: gradle/actions/setup-gradle@v4
+
       - name: Android SDK components
         run: |
           SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
@@ -103,10 +107,14 @@ jobs:
           [ -n "${LISTEN_TOGETHER_SERVER:-}" ] && echo "LISTEN_TOGETHER_SERVER=$LISTEN_TOGETHER_SERVER" >> local.properties
           exit 0
 
-      - name: Build the optimised APKs
+      # arm64 only. Every phone this is tested on is arm64, and the native
+      # build is the slowest part of the job — three ABIs of ONNX Runtime,
+      # FFmpeg and the analyser take roughly three times as long as one. Release
+      # still builds all three; this one only has to produce something to hold.
+      - name: Build the optimised APK
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleProdRelease
+          ./gradlew assembleProdRelease -Pandroid.injected.build.abi=arm64-v8a
 
       # Named after the release assets, so testing a preview and then receiving
       # the same version through the in-app updater are the same install.

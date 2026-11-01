@@ -2846,7 +2846,17 @@ private fun LosslessApp(
                         }
                     },
                     modifier = Modifier
-                        .hazeSource(hazeState)
+                        // Haze renders everything beneath this into an offscreen
+                        // layer so an effect can sample it — on every frame,
+                        // whether or not anything is sampling. Under "reduce
+                        // dynamic blur" nothing is: every consumer in the app
+                        // falls back to a flat fill (FloatingBottomBar,
+                        // AccountAlerts, FrostedTopBar, the page menu), so the
+                        // recording had no reader and was pure per-frame cost.
+                        // It showed up on a mid-range device as ~79 MB of
+                        // resident RenderTargets and a third of all frames slow
+                        // on draw commands, with no blur visible anywhere.
+                        .then(if (reduceDynamicBlur) Modifier else Modifier.hazeSource(hazeState))
                         .then(
                             if (glassActive) {
                                 Modifier

@@ -1,15 +1,24 @@
 name: Android APK (manual build)
 
-# A build you can trigger by hand from the Actions tab, for checking that main
-# still compiles and for an APK to sideload when no release is wanted.
+# A build you can trigger by hand from the Actions tab, for an APK to sideload
+# when no release is wanted.
+#
+# Manual only, on purpose. It used to run on every push to main as well, which
+# meant each push started a second full build of the app — C++, ONNX, three ABIs
+# — for a debug APK nobody had asked for, next to the one Check was building.
+# What a push needs to answer is "does this still compile", and Check answers it
+# with unit tests in a fraction of the time.
 #
 # Shipping is .github/workflows/release.yml's job, on a tag — that is the only
 # place a version that installed copies will be offered comes from.
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+
+# One at a time per ref: a queue of near-identical builds helps nobody.
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -24,7 +33,10 @@ jobs:
         with:
           java-version: "17"
           distribution: "temurin"
-          cache: gradle
+
+      # Reads and writes the Gradle build cache, so a second build of the same
+      # app reuses what the first one compiled instead of starting over.
+      - uses: gradle/actions/setup-gradle@v4
 
       # ubuntu-latest ships an Android SDK but not always this build's pieces.
       # sdkmanager is not on PATH in the runner's shell, so it is located
@@ -57,7 +69,7 @@ jobs:
       - name: Build
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleProdDebug
+          ./gradlew assembleProdDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
