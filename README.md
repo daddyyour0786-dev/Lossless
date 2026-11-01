@@ -43,22 +43,13 @@ Requires Android 8.0 (API 26) or newer.
 
 ---
 
-## Addons
+## s
 
-Lossless plays lossless audio through **addons** — small HTTP servers that answer
+Lossless plays lossless audio through **s** — small HTTP servers that answer
 three questions (`/manifest.json`, `/search`, `/stream/{id}`) and hand back FLAC,
 ALAC or hi-res files. Nothing is downloaded and executed to make one work; Lossless
 asks it for tracks and plays what comes back.
 
-The addon network this app is built around is
-[**LastWave addons**](https://lastwaveaddons.clashprojects.qd.je):
-
-1. **Create an account** at [lastwaveaddons.clashprojects.qd.je](https://lastwaveaddons.clashprojects.qd.je)
-   and verify through Telegram or Discord.
-2. You get a **personal endpoint** that looks like
-   `https://lastwaveaddons.clashprojects.qd.je/a/your-token`.
-3. In Lossless: **Settings → Sources → Add an addon**, paste it, tap **Test**, then
-   **Save**.
 
 Lossless signs every request to a token-bearing addon the way that network expects
 (HMAC-SHA256 over the timestamp, method, path and token — see
@@ -167,14 +158,6 @@ It stands on other people's work too:
 |:--|:--|
 | [BitChord](https://github.com/kushagrasinghx/BitChord) | The app Lossless is forked from |
 | [LastWave](https://github.com/Clash-Projects/LastWave-Native) | The addon protocol Lossless speaks |
-| [NewPipe Extractor](https://github.com/TeamNewPipe/NewPipeExtractor) | YouTube stream resolution |
-| [InnerTubeX](https://github.com/MetrolistGroup/innertubex) | The InnerTube client catalog |
-| [am-lyrics](https://github.com/binimum/am-lyrics) | The lyrics animation |
-| [Beat This!](https://github.com/mir-aidj/all-in-one) | On-device beat tracking for Automix |
-| [Jetpack Compose](https://developer.android.com/jetpack) & [Media3](https://developer.android.com/media/media3) | UI toolkit and audio engine |
-| [LRCLIB](https://lrclib.net) | Synchronised lyrics |
-
-The same list is in the app, at the bottom of **Settings**.
 
 ---
 
