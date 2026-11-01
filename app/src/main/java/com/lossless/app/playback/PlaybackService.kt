@@ -937,6 +937,21 @@ class PlaybackService : MediaLibraryService() {
          * on the audio, which is what the media notification shows too.
          */
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            // The third thing a gap can be, and the one that has nothing to do
+            // with the buffer: another app asked for audio focus and Media3
+            // paused us. Without this line a notification's chime and a starved
+            // decoder look identical in a log, which is the difference between
+            // "fix the buffering" and "nothing is broken".
+            // Media3 reports the loss and not the return — there is no
+            // focus-*gain* reason in the constant list — so the line below is
+            // the only half of the exchange that can be logged.
+            if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS) {
+                TrackLog.w(
+                    "AUDIO_OUT",
+                    "paused: another app took audio focus",
+                    about = player?.currentMediaItem?.mediaId,
+                )
+            }
             // Something started the phone's own player while a receiver is the
             // speaker — an internal path, since the session player's door
             // already sends a listener's play to the receiver. The phone goes
@@ -970,6 +985,12 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            // Per-track gap counters. A drain that mattered on the last track
+            // says nothing about this one, and carrying the count over would
+            // make the next track's first underrun read as its tenth.
+            hasBeenReady = false
+            stallBeganAt = 0L
+            underrunsThisTrack = 0
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
@@ -1200,7 +1221,73 @@ class PlaybackService : MediaLibraryService() {
          * loaded and past the load control's gate, standing a decoder up,
          * and opening an audio track. Only the first is ours to shorten.
          */
+        /**
+         * The sink asking for audio it does not have.
+         *
+         * This is the one signal that separates "the music paused" from "the
+         * music paused because the pipeline could not fill the buffer": the
+         * renderer was holding [bufferSizeMs] of audio when it needed more and
+         * had been waiting [elapsedSinceLastFeedMs] for it. A focus loss, a
+         * quality swap and a track change all sound like gaps and none of them
+         * produce this callback.
+         */
+        override fun onAudioUnderrun(
+            eventTime: AnalyticsListener.EventTime,
+            bufferSize: Int,
+            bufferSizeMs: Long,
+            elapsedSinceLastFeedMs: Long,
+        ) {
+            underrunsThisTrack += 1
+            TrackLog.w(
+                "AUDIO_OUT",
+                "underrun #$underrunsThisTrack: dry for ${elapsedSinceLastFeedMs}ms " +
+                    "(sink held ${bufferSizeMs}ms), buffered ahead=${bufferedAheadMs()}ms",
+                about = eventTime.mediaId(),
+            )
+        }
+
+        /** The audio output itself failed — a dead track, not a slow one. */
+        override fun onAudioSinkError(
+            eventTime: AnalyticsListener.EventTime,
+            audioSinkError: Exception,
+        ) {
+            TrackLog.w(
+                "AUDIO_OUT",
+                "audio sink error: ${audioSinkError.javaClass.simpleName}: ${audioSinkError.message}",
+                about = eventTime.mediaId(),
+            )
+        }
+
         override fun onPlaybackStateChanged(eventTime: AnalyticsListener.EventTime, state: Int) {
+            // A stall, timed from the moment the sound stops to the moment it
+            // comes back. `hasBeenReady` is what keeps the wait before the
+            // first note out of these numbers.
+            when (state) {
+                Player.STATE_BUFFERING -> {
+                    if (hasBeenReady && player?.playWhenReady == true && stallBeganAt == 0L) {
+                        stallBeganAt = SystemClock.elapsedRealtime()
+                    }
+                }
+                Player.STATE_READY -> {
+                    hasBeenReady = true
+                    if (stallBeganAt != 0L) {
+                        val stalled = SystemClock.elapsedRealtime() - stallBeganAt
+                        stallBeganAt = 0L
+                        if (stalled >= STALL_LOG_MS) {
+                            TrackLog.w(
+                                "AUDIO_OUT",
+                                "stalled for ${stalled}ms, buffered ahead=${bufferedAheadMs()}ms",
+                                about = eventTime.mediaId(),
+                            )
+                        }
+                    }
+                }
+                else -> {
+                    hasBeenReady = false
+                    stallBeganAt = 0L
+                }
+            }
+
             val cutAt = swapCutAt ?: return
             if (state == Player.STATE_READY) {
                 TrackLog.d(
@@ -1258,6 +1345,20 @@ class PlaybackService : MediaLibraryService() {
      * `currentMediaItem` names the wrong one. The event carries the timeline it
      * was raised against, which does not.
      */
+    /**
+     * How much audio the player is holding ahead of the playhead, in ms.
+     *
+     * The number that makes an underrun readable: dry at 40ms of buffer is a
+     * decoder hiccup, dry at 4 seconds is a load that stopped for a reason.
+     * Read off the player rather than the event because only the player knows
+     * the current position, and this is a diagnostic, not a decision.
+     */
+    private fun bufferedAheadMs(): Long {
+        val active = player ?: return -1L
+        val ahead = active.bufferedPosition - active.currentPosition
+        return if (ahead < 0) 0L else ahead
+    }
+
     private fun AnalyticsListener.EventTime.mediaId(): String? = timeline
         .takeIf { windowIndex < it.windowCount }
         ?.getWindow(windowIndex, Timeline.Window())
@@ -4443,6 +4544,27 @@ class PlaybackService : MediaLibraryService() {
      * can say how long it stayed cut. Null except across a swap.
      */
     private var swapCutAt: Long? = null
+
+    /**
+     * When the player last ran out of audio *while the listener was listening*.
+     *
+     * This is the other thing a gap can be, and the only one that is nobody's
+     * decision: [swapCutAt] is the app cutting the sound on purpose, a focus
+     * loss is another app cutting it, and this is the buffer simply running
+     * dry. Set on entering `STATE_BUFFERING` after the track has already
+     * played, cleared — and logged — when it comes back.
+     */
+    private var stallBeganAt = 0L
+
+    /**
+     * Whether the current item has produced sound yet. A stall before the
+     * first buffer is the ordinary wait for a stream to start, not the pause
+     * in the middle of a song that this is looking for.
+     */
+    private var hasBeenReady = false
+
+    /** How many times the sink has run dry for the current track. */
+    private var underrunsThisTrack = 0
 
     /**
      * The track [ExoPlayer.getAudioFormat] is currently describing.
@@ -9316,8 +9438,20 @@ class PlaybackService : MediaLibraryService() {
         /** Past any song, so the byte ceiling is what stops loading. */
         const val FAR_BUFFER_MS = 15 * 60 * 1000
 
-        /** ~6 minutes at 160kbps: a whole track, for all but the longest. */
-        const val FAR_BUFFER_BYTES = 8 * 1024 * 1024
+        /**
+         * Sized for lossless, not for 160kbps.
+         *
+         * 8 MB is six minutes of a lossy stream and under one minute of a
+         * 24-bit FLAC, which is what this app plays whenever a source offers
+         * it. Once the buffer is full the ceiling stops loading until playback
+         * drains it, so a ceiling a single track exceeds is a cushion that
+         * exists for the first minute and then never again — every later
+         * hiccup (a range that takes a second to open, read-ahead taking the
+         * link, an analysis pass taking the CPU) lands as silence. 48 MB holds
+         * a whole lossless track, and on a phone with 8 GB of RAM it is not a
+         * number worth economising on.
+         */
+        const val FAR_BUFFER_BYTES = 48 * 1024 * 1024
 
         /**
          * A short nudge backwards, and no more: this shares the byte ceiling
@@ -9328,8 +9462,23 @@ class PlaybackService : MediaLibraryService() {
         /** Enough to cover the decoder's own latency, not seconds of dead air. */
         const val START_PLAYBACK_MS = 500
 
-        /** More room after a stall than at the start — see the load control. */
-        const val RESUME_PLAYBACK_MS = 2_000
+        /**
+         * More room after a stall than at the start — but 1.2s, not 2s.
+         *
+         * This is literally how long the silence lasts when a stall happens:
+         * the load control waits for this much audio before it restarts the
+         * output. Two seconds is more cushion than a rebuffer needs on a link
+         * that has just proved it can move megabytes, and the listener hears
+         * every millisecond of it.
+         */
+        const val RESUME_PLAYBACK_MS = 1_200
+
+        /**
+         * A stall shorter than this is inaudible and not worth a log line; one
+         * longer is what the listener means by "it paused".
+         */
+        const val STALL_LOG_MS = 120L
+
 
         /**
          * Outer cap on stream resolution. Individual client calls and probes

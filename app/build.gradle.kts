@@ -117,12 +117,22 @@ android {
         buildConfigField("String", "UPDATE_REPO", "\"daddyyour0786-dev/Lossless\"")
     }
 
+    // Two APKs per release, one per phone architecture: arm64-v8a for every
+    // device sold in the last several years, armeabi-v7a for the older ones.
+    // x86_64 is an emulator, not a phone, and it was a third of the native
+    // build time for an APK nobody installed.
+    //
+    // No universal APK either. It was 171 MB — every architecture in one file —
+    // and every phone now gets its own 56 MB split instead, which is also what
+    // AppUpdateChecker downloads. Dropping it removes the largest thing that
+    // used to sit on the releases page and does not take an ABI away from any
+    // device that had one.
     splits {
         abi {
             isEnable = true
             reset()
-            include("armeabi-v7a", "arm64-v8a", "x86_64")
-            isUniversalApk = true
+            include("armeabi-v7a", "arm64-v8a")
+            isUniversalApk = false
         }
     }
 

@@ -1,11 +1,8 @@
 <div align="center">
 
 <br/>
-<img
-  src="Banner_blac.webp"
-  alt="Lossless app icon"
-  style="width: 100%; max-width: 1200px; height: auto;"
-/>
+
+<img src="Logo.png" alt="Lossless app icon" width="180" />
 
 # Lossless
 
@@ -33,8 +30,9 @@
 ## Download
 
 Grab the newest APK from [**Releases**](https://github.com/daddyyour0786-dev/Lossless/releases/latest)
-and install it. `Lossless-<version>.apk` works on any phone; the `_<abi>` files are
-smaller builds for one processor each.
+and install it. Each release carries two builds: `_arm64-v8a` for every phone from
+roughly the last eight years, `_armeabi-v7a` for older 32-bit ones. The in-app
+updater picks the right one on its own.
 
 Once installed you never have to come back here: every running copy checks this
 repository's newest release on launch and offers the update inside the app, with a

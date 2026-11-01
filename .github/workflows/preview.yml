@@ -160,7 +160,7 @@ jobs:
             # A single-ABI IDE build does not put it in the name at all, so fall
             # back to the ABI that was asked for when there is only one inside.
             name="Lossless-$version-${PREVIEW_ABI:-arm64-v8a}.apk"
-            for abi in armeabi-v7a arm64-v8a x86_64; do
+            for abi in armeabi-v7a arm64-v8a; do
               case "$base" in
                 *"$abi"*) name="Lossless-$version-$abi.apk" ;;
               esac

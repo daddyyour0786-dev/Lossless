@@ -114,8 +114,8 @@ git push && git push --tags
 
 Then watch **Actions → Release**. When it finishes, the release is published with:
 
-- `Lossless-0.1.1.apk` — universal
-- `Lossless-0.1.1_arm64-v8a.apk`, `_armeabi-v7a`, `_x86_64` — per-ABI splits
+- `Lossless-0.1.1_arm64-v8a.apk` — for every 64-bit phone
+- `Lossless-0.1.1_armeabi-v7a.apk` — for older 32-bit phones
 
 Every installed copy of Lossless sees the new tag on its next launch and offers the
 update in-app. Nothing else to do.

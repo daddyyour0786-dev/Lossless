@@ -1,6 +1,7 @@
 package com.lossless.app.playback
 
 import android.net.Uri
+import android.os.SystemClock
 import android.util.Log
 import com.lossless.app.data.TrackLog
 import androidx.media3.common.C
@@ -107,14 +108,29 @@ class ChunkedDataSource(
         return bytesRemaining
     }
 
+    /**
+     * How long the last [openChunk] took, so a slow one can be named.
+     *
+     * A range open happens on the loading thread while the listener is hearing
+     * whatever the buffer still holds, so it is invisible until it is long
+     * enough to drain that buffer — and then it surfaces as "the music paused
+     * for a second", which is the symptom, not the cause. This is the cause,
+     * measured where it happens: if the ranges are being starved by read-ahead
+     * saturating the link, these are the lines that say so.
+     */
     private fun openChunk() {
         val length = minOf(rangeBytes, bytesRemaining)
         val spec = requireNotNull(baseSpec).buildUpon()
             .setPosition(position)
             .setLength(length)
             .build()
+        val openedAt = SystemClock.elapsedRealtime()
         try {
             upstream.open(spec)
+            val took = SystemClock.elapsedRealtime() - openedAt
+            if (took >= SLOW_RANGE_OPEN_MS) {
+                TrackLog.d(TAG, "range $position-${position + length - 1} opened in ${took}ms")
+            }
         } catch (e: Exception) {
             // Which client minted the URL is the first thing worth knowing when
             // a range is refused, and it isn't recoverable from anywhere else by
@@ -198,6 +214,9 @@ class ChunkedDataSource(
 
         /** Enough to ride out a truncated range, not enough to hang on a dead one. */
         const val MAX_EMPTY_RANGES = 3
+
+        /** Below this an open is just an open; above it, it is a suspect. */
+        const val SLOW_RANGE_OPEN_MS = 400L
     }
 
     /** Wraps [upstream]'s sources so everything opened through it is ranged. */

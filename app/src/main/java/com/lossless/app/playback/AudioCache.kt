@@ -5,6 +5,7 @@ import android.media.MediaDataSource
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.Process
 import android.os.SystemClock
 import com.lossless.app.R
 import com.lossless.app.data.TrackLog
@@ -22,6 +23,8 @@ import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.datasource.cache.ContentMetadataMutations
 import androidx.media3.datasource.cache.SimpleCache
 import java.io.IOException
+import java.util.concurrent.Executors
+import java.util.concurrent.ThreadFactory
 import com.lossless.app.data.innertube.StreamResolver
 import com.lossless.app.data.model.Song
 import com.lossless.app.data.settings.AppSettings
@@ -33,6 +36,7 @@ import com.lossless.app.data.sources.SourceStream
 import com.lossless.app.data.sources.TrackMatcher
 import com.lossless.app.download.Downloads
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -223,6 +227,34 @@ object AudioCache {
     private lateinit var appContext: Context
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /**
+     * Where bulk fetching runs: below the audio pipeline, not beside it.
+     *
+     * Read-ahead is deliberately greedy — three lanes is what fills a link —
+     * and the cost of that greed is that it competes with the one track that
+     * matters, the one being heard. When the link or the CPU is the pinch, the
+     * player's own range requests are the ones that lose, and losing one for a
+     * second is a second of silence. Bulk work on a background-priority
+     * dispatcher does not make the link faster; it makes this work the first
+     * thing the scheduler defers rather than the audio.
+     *
+     * Never shut down: it lives as long as the process, and its threads are
+     * daemons, so nothing waits on them at exit.
+     */
+    private val fetchDispatcher = Executors.newFixedThreadPool(
+        FETCH_LANES,
+        ThreadFactory { runnable ->
+            Thread({
+                // Set inside the new thread. A thread factory runs on whichever
+                // thread is spawning this one, so the same call outside the
+                // lambda would demote that thread instead — the playback
+                // thread, most likely.
+                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+                runnable.run()
+            }, "lossless-fetch").apply { isDaemon = true }
+        },
+    ).asCoroutineDispatcher()
 
     /**
      * Kept in the app's no-backup files directory, not its cache directory.
@@ -2364,6 +2396,7 @@ object AudioCache {
         position: Long,
         length: Long,
         pinKey: Boolean = false,
+        lowPriority: Boolean = false,
     ) {
         if (upstreamFactory == null) return
         if (cache.getCachedBytes(cacheKey, position, length) >= length) return
@@ -2383,10 +2416,10 @@ object AudioCache {
         // the cost, and only a probe that actually lands is worth following
         // with the rest of the range.
         if (length > LOCK_PROBE_BYTES) {
-            pull(cacheKey, uri, position, LOCK_PROBE_BYTES, pinKey)
+            pull(cacheKey, uri, position, LOCK_PROBE_BYTES, pinKey, lowPriority)
             if (cache.getCachedBytes(cacheKey, position, LOCK_PROBE_BYTES) < LOCK_PROBE_BYTES) return
         }
-        pull(cacheKey, uri, position, length, pinKey)
+        pull(cacheKey, uri, position, length, pinKey, lowPriority)
     }
 
     /**
@@ -2419,7 +2452,11 @@ object AudioCache {
                 val end = minOf(position + length, start + span)
                 if (end <= start) return@mapNotNull null
                 async {
-                    runCatching { fetch(cacheKey, uri, start, end - start, pinKey) }
+                    // The lanes are the greedy part, so they are the part that
+                    // runs below the audio pipeline — see [fetchDispatcher].
+                    runCatching {
+                        fetch(cacheKey, uri, start, end - start, pinKey, lowPriority = true)
+                    }
                         .onFailure {
                             TrackLog.d(TAG, "lane $lane of $cacheKey stopped: ${it.message}", about = cacheKey)
                         }
@@ -2433,7 +2470,14 @@ object AudioCache {
         fetchInLanes(videoId, Uri.parse("lossless://watch?v=$videoId"), position, length)
 
     /** The actual network pull behind [fetch], unconditional and unchecked. */
-    private suspend fun pull(cacheKey: String, uri: Uri, position: Long, length: Long, pinKey: Boolean) {
+    private suspend fun pull(
+        cacheKey: String,
+        uri: Uri,
+        position: Long,
+        length: Long,
+        pinKey: Boolean,
+        lowPriority: Boolean = false,
+    ) {
         val upstream = upstreamFactory ?: return
 
         // Whose track this is, taken off the URI rather than off [cacheKey]:
@@ -2460,7 +2504,7 @@ object AudioCache {
         val writer = CacheWriter(source, spec, /* temporaryBuffer = */ null, /* listener = */ null)
 
         runCatching {
-            withContext(Dispatchers.IO) {
+            withContext(if (lowPriority) fetchDispatcher else Dispatchers.IO) {
                 // CacheWriter blocks in a read loop and checks this flag between
                 // reads; cancelling the coroutine alone would leave it running.
                 val handle = coroutineContext.job.invokeOnCompletion { writer.cancel() }

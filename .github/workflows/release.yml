@@ -140,38 +140,54 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleProdRelease
 
-      # Renamed to the one shape the updater looks for: `Lossless-<version>` as a
-      # universal APK, and `Lossless-<version>_<abi>` for each split. The suffixes
-      # matter — AppUpdateChecker takes the universal file when it can and falls
-      # back to the split matching the device's own ABI.
+      # Two files, named the way the updater looks for them:
+      # `Lossless-<version>_arm64-v8a.apk` and `Lossless-<version>_armeabi-v7a.apk`.
+      # The suffix is the whole contract — AppUpdateChecker downloads the split
+      # whose ABI matches the device, and a name without one is read as a
+      # universal build for the wrong processor.
       - name: Name the APKs
         id: apks
         run: |
           version="$(sed -n 's/^extra\["losslessVersionName"\] = "\([^"]*\)".*/\1/p' build.gradle.kts)"
-          mkdir -p out
-          shopt -s nullglob
-          for apk in app/build/outputs/apk/prod/release/*.apk; do
-            base="$(basename "$apk" .apk)"
-            # AGP puts the ABI in the middle of the file name
-            # (app-arm64-v8a-prod-release.apk) and the name in the updater's
-            # hands has to end in it instead (Lossless-0.1.0_arm64-v8a.apk):
-            # AppUpdateChecker prefers a name with no underscore at all, so a
-            # split that keeps one is read as the universal build and offered to
-            # the wrong processor.
-            name="Lossless-$version.apk"
-            for abi in armeabi-v7a arm64-v8a x86_64; do
-              case "$base" in
-                *"$abi"*) name="Lossless-$version_$abi.apk" ;;
-              esac
-            done
-            cp "$apk" "out/$name"
-            echo "  $name"
-          done
-          count="$(ls -1 out/*.apk 2>/dev/null | wc -l)"
-          if [ "$count" -eq 0 ]; then
-            echo "::error::No APKs were produced — check the assemble step above."
+          echo "Version: '$version'"
+          if [ -z "$version" ]; then
+            echo "::error::Could not read losslessVersionName from build.gradle.kts."
             exit 1
           fi
+          mkdir -p out
+          found=0
+          while IFS= read -r apk; do
+            base="$(basename "$apk" .apk)"
+            # AGP puts the ABI in the middle of the file name
+            # (app-arm64-v8a-prod-release.apk) and the updater wants it at the
+            # end (Lossless-0.1.6_arm64-v8a.apk). The braces matter: an
+            # unbraced `$version_` is read as a variable called `version_`,
+            # which is unset, which is why every release asset so far has been
+            # named `Lossless-arm64-v8a.apk` with no version in it at all.
+            name=""
+            for abi in armeabi-v7a arm64-v8a; do
+              case "$base" in
+                *"$abi"*) name="Lossless-${version}_${abi}.apk" ;;
+              esac
+            done
+            if [ -z "$name" ]; then
+              # Not expected: the build is configured as two splits. Uploaded
+              # anyway rather than failing the release, but the log says so.
+              echo "::warning::$(basename "$apk") names no ABI — is the splits block still two ABIs?"
+              name="Lossless-${version}.apk"
+            fi
+            cp "$apk" "out/$name"
+            echo "  $apk -> out/$name"
+            found=$((found + 1))
+          done < <(find app/build/outputs/apk/prod/release -type f -name '*.apk' | sort)
+          # The counter, not `ls`: under `nullglob` a failed glob leaves a bare
+          # `ls -1`, which lists the repository root and counts as success.
+          if [ "$found" -eq 0 ]; then
+            echo "::error::The build produced no APK. Output tree:"
+            find app/build -maxdepth 4 | head -40
+            exit 1
+          fi
+          ls -l out/
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Publish the release
@@ -189,5 +205,7 @@ jobs:
             Install the APK below, or just wait — every running copy of Lossless
             offers this update inside the app the next time it is opened.
 
-            `Lossless-${{ steps.apks.outputs.version }}.apk` installs on any phone.
-            The `_<abi>` files are smaller builds for one processor each.
+            Two builds, one per architecture: `_arm64-v8a` for every phone from
+            roughly the last eight years, `_armeabi-v7a` for older 32-bit ones.
+            Both install over an earlier version and keep your library, downloads
+            and sign-ins; the in-app updater picks the right one by itself.
