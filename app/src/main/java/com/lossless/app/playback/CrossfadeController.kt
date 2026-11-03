@@ -23,6 +23,7 @@ import com.lossless.app.playback.loopmix.LoopMixPort
 import com.lossless.app.playback.loopmix.LoopMixRenderer
 import com.lossless.app.playback.loopmix.LoopMixSession
 import com.lossless.app.playback.loopmix.LoopRegion
+import com.lossless.app.playback.smart.AutomixPlanner
 import com.lossless.app.playback.smart.CrossfadeMode
 import com.lossless.app.playback.smart.LoopMix
 import com.lossless.app.playback.smart.FILTER_ECHO_AT
@@ -1096,7 +1097,20 @@ class CrossfadeController(
         // The DJ planner is Automix now; there is no separate mode switch.
         val advanced = true
 
-        val plan = planTransition(
+        // Automix's own planner gets first say. It works from the stored
+        // analyses alone and degrades tier by tier — beat-matched blend,
+        // stretch, filter ride, plain fade — so the ported planner below is
+        // only the fallback for a pair it cannot plan at all (no incoming
+        // track analysis row yet).
+        val plan = AutomixPlanner.plan(
+            AutomixPlanner.Input(
+                outgoing = currentAnalysis,
+                incoming = nextAnalysis,
+                outgoingDurationSeconds = duration / 1000.0,
+                incomingDurationSeconds = nextDuration / 1000.0,
+                currentTimeSeconds = player.currentPosition / 1000.0,
+            ),
+        ) ?: planTransition(
             analysis = currentAnalysis,
             nextAnalysis = nextAnalysis,
             currentTrack = currentItem.toTransitionInfo(duration),
