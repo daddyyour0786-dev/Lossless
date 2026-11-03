@@ -70,7 +70,9 @@ host yourself work too, if they speak the same protocol.
 - **Search, browse and play** anything on YouTube Music.
 - **Lossless audio** from your addons, with YouTube Music as the fallback.
 - **Gapless playback with real crossfade**, 0–12 s.
-- **Automix** — DJ-style transitions with beat-matching and tempo-stretching.
+- **Automix** — DJ-style transitions with beat-matching and tempo-stretching,
+  driven by a self-contained, pure-Kotlin analysis engine (no models
+  required); one toggle, everything else automatic.
 - **Offline downloads** with embedded metadata.
 - **Local files** and your own library.
 - **Background playback** through a proper foreground media session.

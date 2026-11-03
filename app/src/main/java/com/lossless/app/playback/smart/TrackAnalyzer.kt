@@ -992,6 +992,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      */
     private class Structural(
         val features: TrackFeatures.Features?,
+        /** Automix's own whole-track measurement — same decoded span, pure-Kotlin engine. */
+        val automix: AutomixDsp.Result? = null,
         val decodedShort: Boolean = false,
     )
 
@@ -1082,7 +1084,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             pcm.samples
         }
 
-        return Structural(TrackFeatures.analyze(samples, effectiveDuration))
+        val automix = AutomixDsp.analyze(samples, structRate, effectiveDuration)
+        return Structural(TrackFeatures.analyze(samples, effectiveDuration), automix = automix)
     }
 
     /**
@@ -1134,7 +1137,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // exactly what those lines write a permanent "cannot be analysed" for.
         if (stopped) return WholeTrack(null)
         if (structural.decodedShort) return WholeTrack(null, decodedShort = true)
-        val features = structural.features ?: return WholeTrack(empty(trackId, effectiveDuration))
+        val features = structural.features
+        val automix = structural.automix
+        // The native analyzer being absent on this device is not a dead end:
+        // Automix's own engine measured the same span. Both absent is.
+        if (features == null && automix == null) return WholeTrack(empty(trackId, effectiveDuration))
 
         // Pass 2 (Phases 2 and 3, models): the Beat This! grid and the open-unmix vocal mask, over
         // the opening and the ending only. A transition only ever reads the tail of the outgoing
@@ -1169,15 +1176,61 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // head is what a track uses when it is the *incoming* side of a different transition.
         val leading = tailGrid ?: headGrid
 
+        // First among equals is Automix's own engine: its grid wins whenever it
+        // measured appreciably surer than the model's — and outright when the
+        // model never ran — and its anchors stand alone. The native Pass 1 fills
+        // the same fields only where Automix measured nothing at all.
+        val dspConf = automix?.beatConfidence ?: 0.0
+        val modelConf = leading?.beatConfidence ?: 0.0
+        val useDspGrid = automix != null && automix.beats.size >= 16 &&
+            (leading == null || modelConf < dspConf - 0.15)
+        val dspHead = if (useDspGrid && automix != null) BeatSide(
+            beats = automix.beats.filter { it < headEnd },
+            downbeats = automix.downbeats.filter { it < headEnd },
+            bpm = automix.bpm,
+            confidence = automix.beatConfidence,
+        ) else null
+        val dspTail = if (useDspGrid && automix != null) BeatSide(
+            beats = automix.beats.filter { it >= tailStart },
+            downbeats = automix.downbeats.filter { it >= tailStart },
+            bpm = automix.bpm,
+            confidence = automix.beatConfidence,
+        ) else null
+        val chosenBpm: Double
+        val chosenInterval: Double
+        val chosenConf: Double
+        if (useDspGrid && automix != null) {
+            chosenBpm = automix.bpm
+            chosenInterval = automix.beatInterval
+            chosenConf = automix.beatConfidence
+        } else {
+            chosenBpm = leading?.bpm ?: automix?.bpm ?: features?.bpm ?: 0.0
+            chosenInterval = leading?.beatInterval ?: automix?.beatInterval ?: features?.beatInterval ?: 0.0
+            chosenConf = leading?.beatConfidence ?: automix?.beatConfidence ?: features?.beatConfidence ?: 0.0
+        }
+        val headFinal = if (useDspGrid) dspHead else headSide
+        val tailFinal = if (useDspGrid) dspTail else tailSide
+        val downbeatsFinal = when {
+            useDspGrid && automix != null -> automix.downbeats.sorted()
+            else -> (headGrid?.downbeats.orEmpty() + tailGrid?.downbeats.orEmpty())
+                .ifEmpty { automix?.downbeats ?: features?.downbeats.orEmpty() }
+                .sorted()
+        }
+        val contentEnd = when {
+            automix != null && automix.contentEndTime > 0 -> automix.contentEndTime
+            features?.contentEndTime != null && features.contentEndTime > 0 -> features.contentEndTime
+            else -> effectiveDuration
+        }
+
         Log.d(
             TAG,
-            "Analysed $trackId: bpm=${leading?.bpm ?: features.bpm} " +
-                "conf=${leading?.beatConfidence ?: features.beatConfidence} " +
-                "key=${features.key} contentEnd=${features.contentEndTime} " +
-                "mixOutCandidates=${features.mixOutCandidates.size} " +
-                "grid=${if (leading != null) "model" else "dsp"} " +
-                "beats=${headGrid?.beats?.size ?: 0}+${tailGrid?.beats?.size ?: 0} " +
-                "downbeats=${headGrid?.downbeats?.size ?: 0}+${tailGrid?.downbeats?.size ?: 0} " +
+            "Analysed $trackId: bpm=$chosenBpm " +
+                "conf=$chosenConf " +
+                "key=${features?.key.orEmpty()} contentEnd=$contentEnd " +
+                "mixOutCandidates=${automix?.mixOutCandidates?.size ?: features?.mixOutCandidates?.size ?: 0} " +
+                "grid=${if (useDspGrid) "automix" else if (leading != null) "model" else "dsp"} " +
+                "beats=${headFinal?.beats?.size ?: 0}+${tailFinal?.beats?.size ?: 0} " +
+                "downbeats=${downbeatsFinal.size} " +
                 "vocalMask=${if (regions.any { it.vocalMask != null }) "model" else "dsp"} " +
                 "windows=${regions.size} vocalWindows=${regions.count { it.vocalWindow != null }}",
         )
@@ -1187,36 +1240,45 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     status = TrackAnalysis.STATUS_READY,
                     trackId = trackId,
                     duration = effectiveDuration,
-                    contentEndTime = features.contentEndTime.takeIf { it > 0 } ?: effectiveDuration,
-                    bpm = leading?.bpm ?: features.bpm,
-                beatInterval = leading?.beatInterval ?: features.beatInterval,
-                beatConfidence = leading?.beatConfidence ?: features.beatConfidence,
-                downbeats = (headGrid?.downbeats.orEmpty() + tailGrid?.downbeats.orEmpty())
-                    .ifEmpty { features.downbeats }
-                    .sorted(),
-                firstBeat = headGrid?.firstBeat ?: features.firstBeat,
-                phraseBoundaries = features.phraseBoundaries,
-                key = features.key,
-                keyConfidence = features.keyConfidence,
-                audibleStartTime = features.audibleStartTime,
-                pickupTime = features.pickupTime,
-                introEndTime = features.introEndTime,
-                outroStartTime = features.outroStartTime,
-                mixInTime = features.mixInTime,
-                mixOutTime = features.mixOutTime,
-                mixInCandidates = features.mixInCandidates,
-                mixOutCandidates = features.mixOutCandidates,
-                energyCurve = features.energyCurve,
-                lowEnergyCurve = features.lowEnergyCurve,
+                    contentEndTime = contentEnd,
+                    bpm = chosenBpm,
+                beatInterval = chosenInterval,
+                beatConfidence = chosenConf,
+                downbeats = downbeatsFinal,
+                firstBeat = when {
+                    useDspGrid && automix != null -> automix.firstBeat
+                    else -> headGrid?.firstBeat ?: automix?.firstBeat ?: features?.firstBeat ?: 0.0
+                },
+                phraseBoundaries = automix?.phraseBoundaries?.takeIf { it.isNotEmpty() }
+                    ?: features?.phraseBoundaries.orEmpty(),
+                key = features?.key.orEmpty(),
+                keyConfidence = features?.keyConfidence ?: 0.0,
+                audibleStartTime = automix?.audibleStartTime ?: features?.audibleStartTime,
+                pickupTime = automix?.pickupTime ?: features?.pickupTime,
+                introEndTime = automix?.introEndTime ?: features?.introEndTime ?: 0.0,
+                outroStartTime = automix?.outroStartTime ?: features?.outroStartTime ?: 0.0,
+                mixInTime = automix?.mixInTime ?: features?.mixInTime ?: 0.0,
+                mixOutTime = automix?.mixOutTime ?: features?.mixOutTime ?: 0.0,
+                mixInCandidates = automix?.mixInCandidates?.takeIf { it.isNotEmpty() }
+                    ?: features?.mixInCandidates.orEmpty(),
+                mixOutCandidates = automix?.mixOutCandidates?.takeIf { it.isNotEmpty() }
+                    ?: features?.mixOutCandidates.orEmpty(),
+                energyCurve = automix?.energyCurve?.takeIf { it.isNotEmpty() }
+                    ?: features?.energyCurve.orEmpty(),
+                lowEnergyCurve = automix?.lowEnergyCurve?.takeIf { it.isNotEmpty() }
+                    ?: features?.lowEnergyCurve.orEmpty(),
                 // The model's mask where it ran, the DSP heuristic's where it didn't. Falling back to
                 // the heuristic rather than to nothing matters because the policy reads an
                 // absent mask and a neutral one identically — as "no evidence" — so a failed model
                 // pass would otherwise silently discard the estimate Phase 1 already had.
-                vocalActivityMask = mergeMasks(features.energyCurve.size, regions.mapNotNull { it.vocalMask })
-                    ?: features.vocalActivityMask.map(::heuristicVocalOnModelScale),
-                vocalProbability = features.vocalProbability,
-                headBeats = headSide,
-                tailBeats = tailSide,
+                vocalActivityMask = when {
+                    features != null -> mergeMasks(features.energyCurve.size, regions.mapNotNull { it.vocalMask })
+                        ?: features.vocalActivityMask.map(::heuristicVocalOnModelScale)
+                    else -> regions.mapNotNull { it.vocalMask }.firstOrNull()?.toList() ?: emptyList()
+                },
+                vocalProbability = features?.vocalProbability ?: 0.0,
+                headBeats = headFinal,
+                tailBeats = tailFinal,
                 vocalWindows = regions.mapNotNull { it.vocalWindow },
                 levelWindows = regions.mapNotNull { it.levelWindow },
             ),
